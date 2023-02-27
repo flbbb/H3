@@ -1,71 +1,133 @@
 # Copyright (c) 2023, Tri Dao, Dan Fu.
 
 import math
-import re
 from functools import partial
 
-from collections import namedtuple, OrderedDict
-from collections.abc import Sequence
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from transformers.models.gpt2.configuration_gpt2 import GPT2Config
+from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput
+from transformers import PreTrainedModel
 
-from flash_attn.modules.mha import MHA
 from flash_attn.modules.mlp import Mlp, FusedMLP
 from flash_attn.modules.block import Block
 from flash_attn.modules.embedding import GPT2Embeddings
-from flash_attn.utils.generation import GenerationMixin
+from src.models.ssm.cross_attn import MHACrossAttn
+from src.models.ssm_config import SSMConfig
+from src.utils.utils import shift_tokens_right
 
 try:
     from flash_attn.ops.layer_norm import dropout_add_layer_norm
 except ImportError:
     dropout_add_layer_norm = None
 
-from src.models.ssm.h3 import H3
+from src.models.ssm.h3 import H3, H3Expand
+from src.models.custom_block import HiddenStateBlock
 
 
-def create_mixer_cls(ssm_cls=H3, ssm_cfg=None, attn_layer_idx=None, attn_cfg=None, layer_idx=None):
+def create_mixer_cls(
+    ssm_cls=H3,
+    ssm_cfg=None,
+    attn_layer_idx=None,
+    num_heads=1,
+    layer_idx=None,
+):
     if attn_layer_idx is not None and layer_idx in attn_layer_idx:
-        causal = True if attn_cfg is None else attn_cfg.pop('causal', True)
-        mixer_cls = partial(MHA, layer_idx=layer_idx, causal=causal, 
-                            **(attn_cfg if attn_cfg is not None else {}))
+        mixer_cls = partial(
+            MHACrossAttn,
+            layer_idx=layer_idx,
+            num_heads=num_heads,
+        )
     else:
-        mixer_cls = partial(ssm_cls, layer_idx=layer_idx,
-                            **(ssm_cfg if ssm_cfg is not None else {}))
+        mixer_cls = partial(
+            ssm_cls, layer_idx=layer_idx, **(ssm_cfg if ssm_cfg is not None else {})
+        )
     return mixer_cls
 
 
 def create_mlp_cls(d_model, d_inner=None, fused_mlp=False):
     inner_dim = d_inner if d_inner is not None else 4 * d_model
     if not fused_mlp:
-        mlp_cls = partial(Mlp, hidden_features=inner_dim,
-                          activation=partial(F.gelu, approximate='tanh'))
+        mlp_cls = partial(
+            Mlp,
+            hidden_features=inner_dim,
+            activation=partial(F.gelu, approximate="tanh"),
+        )
     else:
         mlp_cls = partial(FusedMLP, hidden_features=inner_dim)
     return mlp_cls
 
 
-def create_block(d_model, d_inner=None, ssm_cls=H3, ssm_cfg=None, attn_layer_idx=None,
-                 attn_cfg=None, layer_norm_epsilon=1e-5,
-                 resid_dropout1=0.0, resid_dropout2=0.0, residual_in_fp32=False,
-                 fused_mlp=False, fused_dropout_add_ln=False, layer_idx=None):
-    mixer_cls = create_mixer_cls(ssm_cls=ssm_cls, ssm_cfg=ssm_cfg, attn_layer_idx=attn_layer_idx,
-                                 attn_cfg=attn_cfg, layer_idx=layer_idx)
-    mlp_cls = create_mlp_cls(d_model, d_inner=d_inner, fused_mlp=fused_mlp)
-    norm_cls = partial(nn.LayerNorm, eps=layer_norm_epsilon)
-    block = Block(d_model, mixer_cls, mlp_cls, norm_cls=norm_cls,
-                  prenorm=True, resid_dropout1=resid_dropout1, resid_dropout2=resid_dropout2,
-                  fused_dropout_add_ln=fused_dropout_add_ln, residual_in_fp32=residual_in_fp32)
+def create_block(
+    config: SSMConfig,
+    attn_layer_idx=None,
+    layer_idx=None,
+    last_layer=False,
+    first_layer=False,
+):
+    if last_layer:
+        ssm_cls = H3Expand
+        ssm_cfg = {
+            "disc": config.disc,
+            "d_state": config.d_state,
+            "use_fast_fftconv": config.use_fast_fftconv,
+            "n_reconstructs": config.n_reconstructs,
+        }
+    else:
+        ssm_cls = H3
+        ssm_cfg = {
+            "disc": config.disc,
+            "d_state": config.d_state,
+            "use_fast_fftconv": config.use_fast_fftconv,
+        }
+    mixer_cls = create_mixer_cls(
+        ssm_cls=ssm_cls,
+        layer_idx=layer_idx,
+        ssm_cfg=ssm_cfg,
+        attn_layer_idx=attn_layer_idx,
+    )
+    mlp_cls = create_mlp_cls(
+        config.d_model, d_inner=config.d_inner, fused_mlp=config.fused_mlp
+    )
+    norm_cls = partial(nn.LayerNorm, eps=config.layer_norm_epsilon)
+    resid_dropout1 = config.embed_dropout if first_layer else config.resid_dropout
+    if last_layer:
+        block = HiddenStateBlock(
+            config.d_model,
+            mixer_cls,
+            mlp_cls,
+            norm_cls=norm_cls,
+            resid_dropout1=resid_dropout1,
+            resid_dropout2=config.resid_dropout,
+        )
+    else:
+        block = Block(
+            config.d_model,
+            mixer_cls,
+            mlp_cls,
+            norm_cls=norm_cls,
+            prenorm=True,
+            resid_dropout1=resid_dropout1,
+            resid_dropout2=config.resid_dropout,
+            fused_dropout_add_ln=config.fused_dropout_add_ln,
+            residual_in_fp32=config.residual_in_fp32,
+        )
     block.layer_idx = layer_idx
+    block.is_last_layer = last_layer
+    block.is_first_layer = first_layer
     return block
 
 
 # https://github.com/huggingface/transformers/blob/c28d04e9e252a1a099944e325685f14d242ecdcd/src/transformers/models/gpt2/modeling_gpt2.py#L454
-def _init_weights(module, n_layer, initializer_range=0.02, rescale_prenorm_residual=True,
-                  glu_act=False):
+def _init_weights(
+    module,
+    n_layer,
+    initializer_range=0.02,
+    rescale_prenorm_residual=True,
+    glu_act=False,
+):
     if isinstance(module, nn.Linear):
         nn.init.normal_(module.weight, std=initializer_range)
         if module.bias is not None:
@@ -83,30 +145,36 @@ def _init_weights(module, n_layer, initializer_range=0.02, rescale_prenorm_resid
         for name, p in module.named_parameters():
             if name in ["out_proj.weight", "fc2.weight"]:
                 # Special Scaled Initialization --> There are 2 Layer Norms per Transformer Block
-                nn.init.normal_(p, mean=0.0, std=initializer_range / math.sqrt(2 * n_layer))
+                nn.init.normal_(
+                    p, mean=0.0, std=initializer_range / math.sqrt(2 * n_layer)
+                )
             # If using GLU activation for now, we scale the std by 2
             elif name in ["output_linear.0.weight"]:
                 # Special Scaled Initialization --> There are 2 Layer Norms per Transformer Block
                 if not glu_act:
-                    nn.init.normal_(p, mean=0.0, std=initializer_range / math.sqrt(2 * n_layer))
+                    nn.init.normal_(
+                        p, mean=0.0, std=initializer_range / math.sqrt(2 * n_layer)
+                    )
                 else:
                     out_features = p.shape[0]
                     # Multiplying the first half of the matrix by 2 since sigmoid scales it down by 0.5
                     # on average.
-                    nn.init.normal_(p[:out_features // 2], mean=0.0, std=initializer_range / math.sqrt(2 * n_layer) * 2)
+                    nn.init.normal_(
+                        p[: out_features // 2],
+                        mean=0.0,
+                        std=initializer_range / math.sqrt(2 * n_layer) * 2,
+                    )
 
 
-class SSMModel(nn.Module):
-
-    def __init__(self, d_model: int, n_layer: int, d_inner: int, vocab_size: int, ssm_cfg=None,
-                 attn_layer_idx=None, attn_cfg=None, max_position_embeddings=0,
-                 resid_dropout: float = 0.0, embed_dropout: float = 0.1, dropout_cls=nn.Dropout,
-                 layer_norm_epsilon: float = 1e-5, initializer_cfg=None,
-                 fused_mlp=False, fused_dropout_add_ln=False, residual_in_fp32=False,
-                 **kwargs) -> None:
+class SSMEncoderModel(nn.Module):
+    def __init__(
+        self,
+        config: SSMConfig,
+        embeddings,
+    ) -> None:
         super().__init__()
-        self.embeddings = GPT2Embeddings(d_model, vocab_size, max_position_embeddings)
-        self.residual_in_fp32 = residual_in_fp32
+        self.embeddings = embeddings
+        self.residual_in_fp32 = config.residual_in_fp32
 
         # We change the order of dropout, residual and layer norm:
         # Instead of LN -> Attn / MLP -> Dropout -> Add, we do:
@@ -114,32 +182,60 @@ class SSMModel(nn.Module):
         # the main branch (output of MLP). The model definition is unchanged, but the mapping of the
         # nn.Dropout probabilities are changed.
         # This is for performance reason: we can fuse dropout + add + layer_norm.
-        self.fused_dropout_add_ln = fused_dropout_add_ln
+        self.fused_dropout_add_ln = config.fused_dropout_add_ln
         if self.fused_dropout_add_ln and dropout_add_layer_norm is None:
-            raise ImportError('dropout_add_layer_norm is not installed')
+            raise ImportError("dropout_add_layer_norm is not installed")
+        list_modules = [
+            create_block(
+                config,
+                layer_idx=i,
+                first_layer=i == 0,
+                last_layer=False,
+            )
+            for i in range(config.n_layer - 1)
+        ]
+        last_layer = create_block(
+            config,
+            last_layer=True,
+            layer_idx=config.n_layer - 1,
+        )
+        list_modules.append(last_layer)
+        self.layers = nn.ModuleList(list_modules)
 
-        self.layers = nn.ModuleList([create_block(
-            d_model, d_inner=d_inner, ssm_cfg=ssm_cfg, attn_layer_idx=attn_layer_idx,
-            attn_cfg=attn_cfg, layer_norm_epsilon=layer_norm_epsilon,
-            resid_dropout1=embed_dropout if i == 0 else resid_dropout,
-            resid_dropout2=resid_dropout, residual_in_fp32=residual_in_fp32,
-            fused_mlp=fused_mlp, fused_dropout_add_ln=fused_dropout_add_ln, layer_idx=i
-        ) for i in range(n_layer)])
+        self.drop_f = nn.Dropout(config.resid_dropout)
+        self.ln_f = nn.LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
 
-        self.drop_f = nn.Dropout(resid_dropout)
-        self.ln_f = nn.LayerNorm(d_model, eps=layer_norm_epsilon)
+        self.apply(
+            partial(
+                _init_weights,
+                n_layer=config.n_layer,
+            )
+        )
 
-        self.apply(partial(_init_weights, n_layer=n_layer,
-                           **(initializer_cfg if initializer_cfg is not None else {})))
-
-    def forward(self, input_ids, position_ids=None, inference_params=None):
-        hidden_states = self.embeddings(input_ids, position_ids=position_ids)
+    def forward(
+        self,
+        input_ids=None,
+        embeddings=None,
+        position_ids=None,
+    ):
+        if input_ids is not None and embeddings is None:
+            hidden_states = self.embeddings(input_ids, position_ids=position_ids)
+        elif input_ids is None and embeddings is not None:
+            hidden_states = embeddings
+        else:
+            raise AttributeError("Either input_ids or embeddings have to be supplied.")
         residual = None
         mixer_kwargs = None
-        if inference_params is not None:
-            mixer_kwargs = dict(inference_params=inference_params)
         for layer in self.layers:
-            hidden_states, residual = layer(hidden_states, residual, mixer_kwargs=mixer_kwargs)
+            if layer.is_last_layer:
+                hidden_states = layer(
+                    hidden_states, residual=None, mixer_kwargs=mixer_kwargs
+                )
+                residual = None
+            else:
+                hidden_states, residual = layer(
+                    hidden_states, residual, mixer_kwargs=mixer_kwargs
+                )
         if not self.fused_dropout_add_ln:
             dropped = self.drop_f(hidden_states)
             residual = (dropped + residual) if residual is not None else dropped
@@ -147,78 +243,247 @@ class SSMModel(nn.Module):
         else:
             # Set prenorm=False here since we don't need the residual
             hidden_states = dropout_add_layer_norm(
-                hidden_states, residual, self.ln_f.weight, self.ln_f.bias,
-                self.drop_f.p if self.training else 0.0, self.ln_f.eps, prenorm=False,
-                residual_in_fp32=self.residual_in_fp32
+                hidden_states,
+                residual,
+                self.ln_f.weight,
+                self.ln_f.bias,
+                self.drop_f.p if self.training else 0.0,
+                self.ln_f.eps,
+                prenorm=False,
+                residual_in_fp32=self.residual_in_fp32,
             )
+        return BaseModelOutput(
+            last_hidden_state=hidden_states,
+            hidden_states=hidden_states,
+        )
+
+
+class SSMDecoderModel(nn.Module):
+    def __init__(
+        self,
+        config: SSMConfig,
+        embeddings,
+    ) -> None:
+        super().__init__()
+        self.embeddings = embeddings
+        self.config = config
+
+        # We change the order of dropout, residual and layer norm:
+        # Instead of LN -> Attn / MLP -> Dropout -> Add, we do:
+        # Dropout -> Add -> LN -> Attn / MLP, returning both the residual branch (output of Add) and
+        # the main branch (output of MLP). The model definition is unchanged, but the mapping of the
+        # nn.Dropout probabilities are changed.
+        # This is for performance reason: we can fuse dropout + add + layer_norm.
+        self.fused_dropout_add_ln = config.fused_dropout_add_ln
+        if self.fused_dropout_add_ln and dropout_add_layer_norm is None:
+            raise ImportError("dropout_add_layer_norm is not installed")
+        self.attn_layer_idx = [
+            i for i in range(1, 2 * self.config.n_layer, 2)
+        ]  # One attention layer between each SSM.
+        self.residual_in_fp32 = config.residual_in_fp32
+
+        list_modules = [
+            create_block(
+                self.config,
+                attn_layer_idx=self.attn_layer_idx,
+                # resid_dropout1=embed_dropout if i == 0 else resid_dropout,
+                layer_idx=i,
+                first_layer=i == 0,
+                last_layer=False,  # Last layer is standard in the decoder.
+            )
+            for i in range(
+                2 * self.config.n_layer
+            )  # Per block one SSM + reconstructed attention
+        ]
+        self.layers = nn.ModuleList(list_modules)
+
+        self.drop_f = nn.Dropout(config.resid_dropout)
+        self.ln_f = nn.LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+
+        self.apply(
+            partial(
+                _init_weights,
+                n_layer=config.n_layer,
+            )
+        )
+
+    def forward(
+        self,
+        input_ids=None,
+        embeddings=None,
+        encoder_hidden_state=None,
+        position_ids=None,
+    ):
+        if input_ids is not None and embeddings is None:
+            hidden_states = self.embeddings(input_ids, position_ids=position_ids)
+        elif input_ids is None and embeddings is not None:
+            hidden_states = embeddings
+        else:
+            raise AttributeError("Either input_ids or embeddings have to be supplied.")
+        residual = None
+
+        for layer in self.layers:
+            if layer.layer_idx in self.attn_layer_idx:
+                mixer_kwargs = {"x_kv": encoder_hidden_state}
+            else:
+                mixer_kwargs = {}
+            hidden_states, residual = layer(
+                hidden_states, residual, mixer_kwargs=mixer_kwargs
+            )
+        if not self.fused_dropout_add_ln:
+            dropped = self.drop_f(hidden_states)
+            residual = (dropped + residual) if residual is not None else dropped
+            hidden_states = self.ln_f(residual.to(dtype=self.ln_f.weight.dtype))
+        else:
+            # Set prenorm=False here since we don't need the residual
+            hidden_states = dropout_add_layer_norm(
+                hidden_states,
+                residual,
+                self.ln_f.weight,
+                self.ln_f.bias,
+                self.drop_f.p if self.training else 0.0,
+                self.ln_f.eps,
+                prenorm=False,
+                residual_in_fp32=self.residual_in_fp32,
+            )
+
         return hidden_states
 
 
-class SSMLMHeadModel(nn.Module, GenerationMixin):
+class SSMPretrainedModel(PreTrainedModel):
+    config_class = SSMConfig
+    base_model_prefix = "model"
+    supports_gradient_checkpointing = False
 
-    def __init__(self, d_model: int, n_layer: int, d_inner: int, vocab_size: int, ssm_cfg=None,
-                 attn_layer_idx=None, attn_cfg=None, max_position_embeddings=0,
-                 resid_dropout: float = 0.0, embed_dropout: float = 0.1, dropout_cls=nn.Dropout,
-                 layer_norm_epsilon: float = 1e-5, initializer_cfg=None,
-                 fused_mlp=False, fused_dropout_add_ln=False, residual_in_fp32=False,
-                 pad_vocab_size_multiple: int = 1, **kwargs) -> None:
-        super().__init__()
-        if vocab_size % pad_vocab_size_multiple != 0:
-            vocab_size += pad_vocab_size_multiple - (vocab_size % pad_vocab_size_multiple)
-        self.backbone = SSMModel(
-            d_model=d_model, n_layer=n_layer, d_inner=d_inner, vocab_size=vocab_size,
-            ssm_cfg=ssm_cfg, attn_layer_idx=attn_layer_idx, attn_cfg=attn_cfg,
-            max_position_embeddings=max_position_embeddings,
-            resid_dropout=resid_dropout, embed_dropout=embed_dropout,
-            dropout_cls=dropout_cls, layer_norm_epsilon=layer_norm_epsilon,
-            initializer_cfg=initializer_cfg, fused_mlp=fused_mlp,
-            fused_dropout_add_ln=fused_dropout_add_ln, residual_in_fp32=residual_in_fp32, **kwargs
+
+class SSMModel(SSMPretrainedModel):
+    def __init__(self, config: SSMConfig) -> None:
+        super().__init__(config)
+        self.config = config
+        if config.shared_embeddings:
+            if self.config.use_positional_embeddings:
+                args_position_embeddings = self.config.max_position_embeddings
+            else:
+                args_position_embeddings = 0
+            shared_embeddings = GPT2Embeddings(
+                self.config.d_model,
+                vocab_size=self.config.vocab_size,
+                max_position_embeddings=args_position_embeddings,
+            )
+            encoder_embeddings = shared_embeddings
+            decoder_embeddings = shared_embeddings
+        else:
+            encoder_embeddings = GPT2Embeddings(
+                self.config.d_model,
+                vocab_size=self.config.vocab_size,
+                max_position_embeddings=args_position_embeddings,
+            )
+            decoder_embeddings = GPT2Embeddings(
+                self.config.d_model,
+                vocab_size=self.config.vocab_size,
+                max_position_embeddings=args_position_embeddings,
+            )
+
+        self.encoder = SSMEncoderModel(
+            config,
+            encoder_embeddings,
         )
-        self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
-        # Initialize weights and apply final processing
-        self.apply(partial(_init_weights, n_layer=n_layer,
-                           **(initializer_cfg if initializer_cfg is not None else {})))
-        self.tie_weights()
+        self.decoder = SSMDecoderModel(
+            config,
+            decoder_embeddings,
+        )
 
-    def tie_weights(self):
-        self.lm_head.weight = self.backbone.embeddings.word_embeddings.weight
+    def forward(self, input_ids=None, decoder_input_ids=None, encoder_outputs=None):
+        if decoder_input_ids is None:
+            if (input_ids is None) and (encoder_outputs is None):
+                raise ValueError(
+                    "If no `decoder_input_ids` or `decoder_inputs_embeds` are "
+                    "passed, `input_ids` cannot be `None`. Please pass either "
+                    "`input_ids` or `decoder_input_ids` or `decoder_inputs_embeds`."
+                )
+            decoder_input_ids = shift_tokens_right(
+                input_ids, self.config.pad_token_id, self.config.decoder_start_token_id
+            )
 
-    def forward(self, input_ids, position_ids=None, inference_params=None):
-        hidden_states = self.backbone(input_ids, position_ids=position_ids,
-                                      inference_params=inference_params)
-        lm_logits = self.lm_head(hidden_states)
-        CausalLMOutput = namedtuple('CausalLMOutput', ['logits'])
-        return CausalLMOutput(logits=lm_logits)
+        if encoder_outputs is None:
+            encoder_outputs = self.encoder(input_ids)
 
-    def load_state_dict(self, state_dict, strict=True):
-        # Remapping from our checkpoints that used different names
-        def key_mapping_backbone(key):
-            key = re.sub(r'^s4seq.encoder.', 'backbone.', key)
-            key = re.sub(r'^embedding.', 'backbone.embeddings.word_embeddings.', key)
-            key = re.sub(r'^backbone.norm', 'backbone.ln_0', key)
-            return key
-        state_dict = OrderedDict((key_mapping_backbone(k), v) for k, v in state_dict.items())
-        # Remapping from our checkpoints that used a different ordering of layers in the block
-        # Previous: Mixer / MLP -> Dropout -> Add -> LN
-        # Current: Dropout -> Add -> LN -> Attn / MLP
-        if 'backbone.ln_0.weight' in state_dict:
-            n_layers = len(self.backbone.layers)
-            ln_weight = state_dict.pop(f'backbone.layers.{n_layers - 1}.norm2.weight')
-            ln_bias = state_dict.pop(f'backbone.layers.{n_layers - 1}.norm2.bias')
-            state_dict['backbone.ln_f.weight'] = ln_weight
-            state_dict['backbone.ln_f.bias'] = ln_bias
-            for l in reversed(range(n_layers)):
-                ln_weight = state_dict.pop(f'backbone.layers.{l}.norm1.weight')
-                ln_bias = state_dict.pop(f'backbone.layers.{l}.norm1.bias')
-                state_dict[f'backbone.layers.{l}.norm2.weight'] = ln_weight
-                state_dict[f'backbone.layers.{l}.norm2.bias'] = ln_bias
-                if l > 0:
-                    ln_weight = state_dict.pop(f'backbone.layers.{l - 1}.norm2.weight')
-                    ln_bias = state_dict.pop(f'backbone.layers.{l - 1}.norm2.bias')
-                    state_dict[f'backbone.layers.{l}.norm1.weight'] = ln_weight
-                    state_dict[f'backbone.layers.{l}.norm1.bias'] = ln_bias
-            ln_weight = state_dict.pop('backbone.ln_0.weight')
-            ln_bias = state_dict.pop('backbone.ln_0.bias')
-            state_dict[f'backbone.layers.0.norm1.weight'] = ln_weight
-            state_dict[f'backbone.layers.0.norm1.bias'] = ln_bias
-        return super().load_state_dict(state_dict, strict=strict)
+        decoder_output = self.decoder(
+            input_ids=decoder_input_ids,
+            encoder_hidden_state=encoder_outputs.last_hidden_state,
+        )
+        return decoder_output
+
+
+class SSMForConditionalGeneration(SSMPretrainedModel):
+    def __init__(self, config: SSMConfig):
+        super().__init__(config)
+        self.config = config
+        self.model = SSMModel(config=config)
+        self.register_buffer("final_logits_bias", torch.zeros((1, config.vocab_size)))
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+    def pad_inputs(self, input_ids, pad_token_id, L=None):
+        """Padding for autoregressive generation."""
+        if L is None:
+            L = self.config.max_position_embeddings
+        gap = L - input_ids.shape[1]
+        return F.pad(input_ids, (0, gap), mode="constant", value=pad_token_id)
+
+    def get_encoder(self):
+        return self.s4_model.encoder
+
+    def get_decoder(self):
+        return self.s4_model.decoder
+
+    def prepare_inputs_for_generation(self, input_ids: torch.LongTensor, **kwargs):
+        """
+        Implement in subclasses of [`PreTrainedModel`] for custom behavior to prepare inputs in the generate method.
+        """
+
+        return {
+            "input_ids": None,
+            "decoder_input_ids": input_ids,
+            "encoder_outputs": kwargs["encoder_outputs"],
+        }
+
+    def forward(
+        self,
+        input_ids=None,
+        labels=None,
+        decoder_input_ids=None,
+        encoder_outputs=None,
+        attention_mask=None,
+        **kwargs,
+    ):
+        if labels is not None:
+            decoder_input_ids = shift_tokens_right(
+                labels, self.config.pad_token_id, self.config.decoder_start_token_id
+            )
+
+        decoder_outputs, encoder_hidden_state = self.model(
+            input_ids=input_ids,
+            decoder_input_ids=decoder_input_ids,
+            encoder_outputs=encoder_outputs,
+            attention_mask=attention_mask,
+        )
+
+        lm_logits = self.lm_head(decoder_outputs.mT) + self.final_logits_bias
+
+        if input_ids is None:
+            # for generation
+            lm_logits = lm_logits
+
+        masked_lm_loss = None
+
+        if labels is not None:
+            loss_fct = nn.CrossEntropyLoss(label_smoothing=self.config.label_smoothing)
+            masked_lm_loss = loss_fct(
+                lm_logits.view(-1, self.config.vocab_size), labels.view(-1)
+            )
+
+        return Seq2SeqLMOutput(
+            loss=masked_lm_loss,
+            logits=lm_logits,
+            encoder_last_hidden_state=encoder_hidden_state,
+        )

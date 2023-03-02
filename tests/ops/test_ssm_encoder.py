@@ -47,6 +47,12 @@ if __name__ == "__main__":
         max_position_embeddings=0,
     )
 
+    pos_mask = torch.randint(0, l_encoder, (B, 1))
+    attention_mask = torch.ones(B, l_encoder, dtype=torch.float32)
+    indices = torch.arange(0, l_encoder).unsqueeze(0)
+    attention_mask[indices <= pos_mask] = 0.0
+    attention_mask = attention_mask.cuda()
+
     encoder = SSMEncoderModel(config, embeddings=embeddings)
 
     decoder = SSMDecoderModel(config, embeddings=embeddings)
@@ -60,13 +66,15 @@ if __name__ == "__main__":
     input_ids = input_ids.cuda()
     decoder_input_ids = decoder_input_ids.cuda()
 
-    encoder_output = encoder(embeddings=u)
+    encoder_output = encoder(embeddings=u, attention_mask=attention_mask)
     decoder_hidden_state = decoder(
         embeddings=u, encoder_hidden_state=encoder_output.last_hidden_state
     )
 
     model_decoder_output, model_encoder_output = model(
-        input_ids=input_ids, decoder_input_ids=decoder_input_ids
+        input_ids=input_ids,
+        decoder_input_ids=decoder_input_ids,
+        attention_mask=attention_mask,
     )
     print("Encoder:", encoder_output.last_hidden_state.shape)
     print("Decoder:", decoder_hidden_state.shape)
@@ -81,4 +89,12 @@ if __name__ == "__main__":
 
     model_lm = SSMForConditionalGeneration(config)
     model_lm.cuda()
-    logits = model_lm(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
+    logits = model_lm(
+        input_ids=input_ids,
+        labels=decoder_input_ids,
+        attention_mask=attention_mask,
+    )
+    logits.loss.backward()
+    for name, param in model.named_parameters():
+        if param.grad is None:
+            print(name)

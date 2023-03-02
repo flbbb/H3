@@ -217,6 +217,7 @@ class SSMEncoderModel(nn.Module):
         input_ids=None,
         embeddings=None,
         position_ids=None,
+        attention_mask=None,
         **kwargs,  # To absorb the kwargs of generation module.
     ):
         if input_ids is not None and embeddings is None:
@@ -224,10 +225,15 @@ class SSMEncoderModel(nn.Module):
         elif input_ids is None and embeddings is not None:
             hidden_states = embeddings
         else:
-            raise AttributeError("Either input_ids or embeddings have to be supplied.")
+            raise AttributeError("Either input_ids or embeddings ha to be supplied.")
         residual = None
         mixer_kwargs = None
+
+        # Bad but we need to make sure that attention mask is supplied for correct zero-padding.
+        assert attention_mask is not None
         for layer in self.layers:
+            # Left-zero padding.
+            hidden_states = hidden_states * attention_mask.unsqueeze(-1)
             if layer.is_last_layer:
                 hidden_states = layer(
                     hidden_states, residual=None, mixer_kwargs=mixer_kwargs
@@ -399,6 +405,7 @@ class SSMModel(SSMPretrainedModel):
         input_ids=None,
         decoder_input_ids=None,
         encoder_outputs=None,
+        attention_mask=None,
         **kwargs,
     ):
         if decoder_input_ids is None:
@@ -413,7 +420,7 @@ class SSMModel(SSMPretrainedModel):
             )
 
         if encoder_outputs is None:
-            encoder_outputs = self.encoder(input_ids)
+            encoder_outputs = self.encoder(input_ids, attention_mask=attention_mask)
 
         decoder_output = self.decoder(
             input_ids=decoder_input_ids,
@@ -484,7 +491,7 @@ class SSMForConditionalGeneration(SSMPretrainedModel):
         masked_lm_loss = None
 
         if labels is not None:
-            loss_fct = nn.CrossEntropyLoss(label_smoothing=self.config.label_smoothing)
+            loss_fct = nn.CrossEntropyLoss()
             masked_lm_loss = loss_fct(
                 lm_logits.view(-1, self.config.vocab_size), labels.view(-1)
             )

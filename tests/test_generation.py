@@ -26,6 +26,11 @@ if __name__ == "__main__":
     decoder_input_ids = torch.randint(0, args.vocab_size, (B, l_decoder))
     n_layer = args.n_layer
     n_heads = args.n_heads
+    pos_mask = torch.randint(0, l_encoder, (B, 1))
+    attention_mask = torch.ones(B, l_encoder, dtype=torch.float32)
+    indices = torch.arange(0, l_encoder).unsqueeze(0)
+    attention_mask[indices <= pos_mask] = 0.0
+    attention_mask = attention_mask.cuda()
 
     config = SSMConfig(
         d_model=H,
@@ -39,5 +44,7 @@ if __name__ == "__main__":
 
     model.cuda()
     input_ids = input_ids.cuda()
-    generation = model.generate(input_ids=input_ids, num_beams=3)
+    generation = model.generate(
+        input_ids=input_ids, num_beams=3, attention_mask=attention_mask
+    )
     print(generation)

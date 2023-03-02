@@ -287,7 +287,6 @@ class H3Expand(nn.Module):
             assert fftconv_func is not None, "Need to install fftconv"
 
         self.k_proj = nn.Linear(self.d_model, self.d_model, **factory_kwargs)
-        self.v_proj = nn.Linear(self.d_model, self.d_model, **factory_kwargs)
 
         # TODO: SSKernel doesn't take device argument yet
         self.ssm_k_kernel = SSKernel(
@@ -307,7 +306,6 @@ class H3Expand(nn.Module):
             channels=1,
             **kernel_args,
         )
-        self.D = nn.Parameter(torch.randn(self.H, **factory_kwargs))
 
         # Pointwise
         # position-wise output transform to mix features
@@ -344,9 +342,7 @@ class H3Expand(nn.Module):
         )
 
         k = self.k_proj.weight @ u.T + self.k_proj.bias.to(dtype).unsqueeze(-1)
-        v = self.v_proj.weight @ u.T + self.v_proj.bias.to(dtype).unsqueeze(-1)
-        k, v = [rearrange(x, "h (b l) -> b h l", l=L) for x in [k, v]]
-
+        k = rearrange(k, "h (b l) -> b h l", l=L)
         ssm_k_kernel, _ = self.ssm_k_kernel(
             L=L_kernel, state=state_k, rate=1.0
         )  # (C H L) (B C H L)

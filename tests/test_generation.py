@@ -1,11 +1,5 @@
-from src.models.ssm_seq import (
-    SSMEncoderModel,
-    SSMDecoderModel,
-    SSMModel,
-    SSMForConditionalGeneration,
-)
+from src.models.ssm_seq import SSMForConditionalGeneration, SSMModel
 from src.models.ssm_config import SSMConfig
-from flash_attn.modules.embedding import GPT2Embeddings
 import torch
 from argparse import ArgumentParser
 
@@ -41,44 +35,9 @@ if __name__ == "__main__":
         vocab_size=args.vocab_size,
         n_reconstructs=args.n_reconstructs,
     )
-    embeddings = GPT2Embeddings(
-        config.d_model,
-        vocab_size=config.vocab_size,
-        max_position_embeddings=0,
-    )
+    model = SSMForConditionalGeneration(config)
 
-    encoder = SSMEncoderModel(config, embeddings=embeddings)
-
-    decoder = SSMDecoderModel(config, embeddings=embeddings)
-
-    model = SSMModel(config)
-
-    encoder.cuda()
-    decoder.cuda()
     model.cuda()
-    u = u.cuda()
     input_ids = input_ids.cuda()
-    decoder_input_ids = decoder_input_ids.cuda()
-
-    encoder_output = encoder(embeddings=u)
-    decoder_hidden_state = decoder(
-        embeddings=u, encoder_hidden_state=encoder_output.last_hidden_state
-    )
-
-    model_decoder_output, model_encoder_output = model(
-        input_ids=input_ids, decoder_input_ids=decoder_input_ids
-    )
-    print("Encoder:", encoder_output.last_hidden_state.shape)
-    print("Decoder:", decoder_hidden_state.shape)
-    decoder_hidden_state.mean().backward()
-    model_decoder_output.mean().backward()
-
-    input_ids = torch.randint(0, args.vocab_size, (B, l_encoder))
-    decoder_input_ids = torch.randint(0, args.vocab_size, (B, l_decoder))
-
-    input_ids = input_ids.cuda()
-    decoder_input_ids = decoder_input_ids.cuda()
-
-    model_lm = SSMForConditionalGeneration(config)
-    model_lm.cuda()
-    logits = model_lm(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
+    generation = model.generate(input_ids=input_ids, num_beams=3)
+    print(generation)

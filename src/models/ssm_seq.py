@@ -217,6 +217,7 @@ class SSMEncoderModel(nn.Module):
         input_ids=None,
         embeddings=None,
         position_ids=None,
+        **kwargs,  # To absorb the kwargs of generation module.
     ):
         if input_ids is not None and embeddings is None:
             hidden_states = self.embeddings(input_ids, position_ids=position_ids)
@@ -393,7 +394,13 @@ class SSMModel(SSMPretrainedModel):
             decoder_embeddings,
         )
 
-    def forward(self, input_ids=None, decoder_input_ids=None, encoder_outputs=None):
+    def forward(
+        self,
+        input_ids=None,
+        decoder_input_ids=None,
+        encoder_outputs=None,
+        **kwargs,
+    ):
         if decoder_input_ids is None:
             if (input_ids is None) and (encoder_outputs is None):
                 raise ValueError(
@@ -412,7 +419,7 @@ class SSMModel(SSMPretrainedModel):
             input_ids=decoder_input_ids,
             encoder_hidden_state=encoder_outputs.last_hidden_state,
         )
-        return decoder_output
+        return decoder_output, encoder_outputs
 
 
 class SSMForConditionalGeneration(SSMPretrainedModel):
@@ -431,10 +438,10 @@ class SSMForConditionalGeneration(SSMPretrainedModel):
         return F.pad(input_ids, (0, gap), mode="constant", value=pad_token_id)
 
     def get_encoder(self):
-        return self.s4_model.encoder
+        return self.model.encoder
 
     def get_decoder(self):
-        return self.s4_model.decoder
+        return self.model.decoder
 
     def prepare_inputs_for_generation(self, input_ids: torch.LongTensor, **kwargs):
         """
@@ -468,7 +475,7 @@ class SSMForConditionalGeneration(SSMPretrainedModel):
             attention_mask=attention_mask,
         )
 
-        lm_logits = self.lm_head(decoder_outputs.mT) + self.final_logits_bias
+        lm_logits = self.lm_head(decoder_outputs) + self.final_logits_bias
 
         if input_ids is None:
             # for generation

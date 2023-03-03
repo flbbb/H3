@@ -102,7 +102,7 @@ class LitSSMForConditiionalGeneration(pl.LightningModule):
                 list_targets=target,
                 scorer=self.scorer,
             )
-            self.log("val_bleu", bleu_results["bleu"])
+            self.log("val_bleu", bleu_results["bleu"], sync_dist=True)
 
     def forward(
         self,

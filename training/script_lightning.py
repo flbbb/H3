@@ -132,7 +132,9 @@ if __name__ == "__main__":
         accelerator = "gpu"
     else:
         accelerator = "cpu"
-    accumulate_grad_batches = args.effective_batch_size // args.per_device_batch_size
+    accumulate_grad_batches = args.effective_batch_size // (
+        args.per_device_batch_size * len(args.gpus)
+    )
 
     learning_rate_monitor = LearningRateMonitor(logging_interval="step")
     checkpoint_callback = ModelCheckpoint(
@@ -150,10 +152,11 @@ if __name__ == "__main__":
         log_every_n_steps=args.logging_steps,
         max_steps=args.training_steps,
         max_epochs=None,
+        # logger=CSVLogger(save_dir="logs/"),
         gradient_clip_val=2.0,
         # overfit_batches=1,
         strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),
-        val_check_interval=args.save_steps,
+        val_check_interval=args.save_steps * accumulate_grad_batches,
         callbacks=[
             checkpoint_callback,
             learning_rate_monitor,

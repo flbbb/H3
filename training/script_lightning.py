@@ -14,10 +14,13 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from datasets import Dataset
 from pathlib import Path
 from pytorch_lightning.loggers import CSVLogger
+import os
 
 from src.utils.utils import DataCollatorLeftPadInput
 
-DATA_PATH = Path("/home/florianlb/projects/data")
+DATA_PATH = Path(os.environ["DATA_PATH"])
+TOKENIZER_PATH = Path(os.environ["TOKENIZER_PATH"])
+SCORER_PATH = Path(os.environ["SCORER_PATH"])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -84,8 +87,8 @@ if __name__ == "__main__":
     )
 
     model = SSMForConditionalGeneration(config)
-    scorer = evaluate.load("bleu")
-    tokenizer = AutoTokenizer.from_pretrained("../tokenizers/unigram-mt-wmt14-en-de")
+    scorer = evaluate.load(str(SCORER_PATH / "bleu"))
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH / "unigram-mt-wmt14-en-de")
 
     reverse_tokenizer = copy(tokenizer)
     reverse_tokenizer.padding_side = "left"

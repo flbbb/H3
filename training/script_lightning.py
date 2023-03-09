@@ -113,6 +113,7 @@ if __name__ == "__main__":
         num_training_steps=args.training_steps,
         ratio_warmup=0.0,
         label_smoothing_factor=args.label_smoothing,
+        lr=args.lr,
     )
 
     data_loader = DataLoader(

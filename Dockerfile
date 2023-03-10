@@ -138,15 +138,7 @@ RUN pip install git+https://github.com/mlcommons/logging.git@2.1.0
 COPY flash-attention flash-attention
 
 # Install CUDA extensions for cross-entropy, fused dense, layer norm
-RUN cd flash-attention \
-    && cd csrc/fused_softmax && pip install . && cd ../../ \
-    && cd csrc/rotary && pip install . && cd ../../ \
-    && cd csrc/xentropy && pip install . && cd ../../ \
-    && cd csrc/layer_norm && pip install . && cd ../../ \
-    && cd csrc/fused_dense_lib && pip install . && cd ../../ \
-    && cd csrc/ft_attention && pip install . && cd ../../ \
-    && cd .. && rm -rf flash-attention
-
+RUN pip install flash-attn
 # Install CUDA extensions for cross-entropy, fused dense, layer norm, fftconv
 COPY csrc csrc
 RUN cd csrc/cauchy && pip install . && cd ../../ \

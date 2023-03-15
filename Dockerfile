@@ -121,19 +121,18 @@ RUN pip install git+https://github.com/pytorch/audio.git@v0.13.1
 # psutil to get the number of cpu physical cores
 # twine to upload package to PyPI
 # eeghdf for EEG stuff (KS)
-RUN pip install pytest matplotlib jupyter ipython ipdb gpustat scikit-learn spacy munch einops opt_einsum fvcore gsutil cmake pykeops zstandard psutil h5py twine gdown eeghdf \
-    && python -m spacy download en_core_web_sm
+RUN pip install pytest matplotlib jupyter ipython ipdb gpustat scikit-learn spacy munch einops opt_einsum fvcore gsutil cmake pykeops zstandard psutil h5py twine gdown nltk evaluate eeghdf rouge-score transformers plotly \
+    && python -m spacy download en_core_web_sm \
+    && python -m nltk.downloader -d /usr/local/share/nltk_data all
 # hydra
 RUN pip install hydra-core==1.3.1 hydra-colorlog==1.2.0 hydra-optuna-sweeper==1.2.0 pyrootutils rich
 # Core packages
-RUN pip install transformers==4.26.0 datasets==2.9.0 pytorch-lightning==1.9.0 triton==2.0.0.dev20221202 wandb==0.13.9 timm==0.6.12 torchmetrics==0.11.1
+RUN pip install transformers==4.26.0 datasets==2.9.0 pytorch-lightning==1.8.6 triton==2.0.0.dev20221202 wandb==0.13.9 timm==0.6.12 torchmetrics==0.11.1
 
 # For MLPerf
 RUN pip install git+https://github.com/mlcommons/logging.git@2.1.0
 
 # # This is for huggingface/examples and smyrf
-# RUN pip install tensorboard seqeval sacrebleu rouge-score tensorflow_datasets
-
 # Install FlashAttention
 COPY flash-attention flash-attention
 
@@ -151,3 +150,4 @@ RUN cd csrc/cauchy && pip install . && cd ../../ \
 #     && rm -rf applications/
 
 # ENV NVIDIA_REQUIRE_CUDA=cuda>=10.1
+RUN pip install tensorboard sacrebleu rouge-score wandb

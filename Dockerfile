@@ -8,7 +8,7 @@ ENV HOST docker
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # https://serverfault.com/questions/683605/docker-container-time-timezone-will-not-reflect-changes
 ENV TZ America/Los_Angeles
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ >/etc/timezone
 
 # git for installing dependencies
 # tzdata to set time zone
@@ -29,9 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     zip \
     unzip \
-    zsh stow subversion fasd \
-    && rm -rf /var/lib/apt/lists/*
-    # openmpi-bin \
+    zsh stow subversion fasd &&
+    rm -rf /var/lib/apt/lists/*
+# openmpi-bin \
 
 # Allow running runmpi as root
 # ENV OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
@@ -107,10 +107,10 @@ ENV PIP_NO_CACHE_DIR=1
 # So we install from source, and change compiler flag -arch=compute_60 -> -arch=compute_70 for V100
 # RUN pip install pytorch-fast-transformers==0.4.0
 # RUN pip install git+git://github.com/idiap/fast-transformers.git@v0.4.0  # doesn't work on V100
-RUN git clone https://github.com/idiap/fast-transformers \
-    && sed -i 's/\["-arch=compute_60"\]/\["-arch=compute_70"\]/' fast-transformers/setup.py \
-    && pip install fast-transformers/ \
-    && rm -rf fast-transformers
+RUN git clone https://github.com/idiap/fast-transformers &&
+    sed -i 's/\["-arch=compute_60"\]/\["-arch=compute_70"\]/' fast-transformers/setup.py &&
+    pip install fast-transformers/ &&
+    rm -rf fast-transformers
 
 # xgboost conflicts with deepspeed
 RUN pip uninstall -y xgboost && DS_BUILD_UTILS=1 DS_BUILD_FUSED_LAMB=1 pip install deepspeed==0.8.0
@@ -121,9 +121,9 @@ RUN pip install git+https://github.com/pytorch/audio.git@v0.13.1
 # psutil to get the number of cpu physical cores
 # twine to upload package to PyPI
 # eeghdf for EEG stuff (KS)
-RUN pip install pytest matplotlib jupyter ipython ipdb gpustat scikit-learn spacy munch einops opt_einsum fvcore gsutil cmake pykeops zstandard psutil h5py twine gdown nltk evaluate eeghdf rouge-score transformers plotly \
-    && python -m spacy download en_core_web_sm \
-    && python -m nltk.downloader -d /usr/local/share/nltk_data all
+RUN pip install pytest matplotlib jupyter ipython ipdb gpustat scikit-learn spacy munch einops opt_einsum fvcore gsutil cmake pykeops zstandard psutil h5py twine gdown nltk evaluate eeghdf rouge-score transformers plotly &&
+    python -m spacy download en_core_web_sm &&
+    python -m nltk.downloader -d /usr/local/share/nltk_data all
 # hydra
 RUN pip install hydra-core==1.3.1 hydra-colorlog==1.2.0 hydra-optuna-sweeper==1.2.0 pyrootutils rich
 # Core packages
@@ -133,6 +133,7 @@ RUN pip install transformers==4.26.0 datasets==2.9.0 pytorch-lightning==1.8.6 tr
 RUN pip install git+https://github.com/mlcommons/logging.git@2.1.0
 
 # # This is for huggingface/examples and smyrf
+RUN pip install tensorboard sacrebleu wandb
 # Install FlashAttention
 COPY flash-attention flash-attention
 
@@ -140,9 +141,9 @@ COPY flash-attention flash-attention
 RUN pip install flash-attn
 # Install CUDA extensions for cross-entropy, fused dense, layer norm, fftconv
 COPY csrc csrc
-RUN cd csrc/cauchy && pip install . && cd ../../ \
-    && cd csrc/fftconv && pip install . && cd ../../ \
-    && cd .. && rm -rf csrc
+RUN cd csrc/cauchy && pip install . && cd ../../ &&
+    cd csrc/fftconv && pip install . && cd ../../ &&
+    cd .. && rm -rf csrc
 
 # COPY applications/ applications
 # RUN pip install applications/smyrf/forks/transformers/ \

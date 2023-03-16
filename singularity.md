@@ -18,3 +18,8 @@ mkdir tmp
 ```bash
 SINGULARITY_TMPDIR=`pwd`/tmp singularity build h3.sif docker://flbbb/jz-ssm:latest
 ```
+
+- Copy the .sif image to the authorized execution space
+```
+idrcontmgr cp h3.sif
+```

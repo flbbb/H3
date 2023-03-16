@@ -1,10 +1,11 @@
 import copy
-from torch.optim import Adam
+
 import pytorch_lightning as pl
-from training.training_utils import decode_batch_labels, get_cosine_schedule_with_warmup
-from src.utils.utils import DataCollatorLeftPadInput
 from torch.utils.data import DataLoader
 from transformers.trainer_pt_utils import LabelSmoother
+
+from training.training_utils import decode_batch_labels, get_cosine_schedule_with_warmup
+from src.utils.utils import DataCollatorLeftPadInput
 
 
 def eval_bleu(list_predictions, list_targets, scorer):
@@ -14,14 +15,14 @@ def eval_bleu(list_predictions, list_targets, scorer):
     try:
         result = scorer.compute(
             predictions=list_predictions, references=list_targets_processed
-        )["bleu"]
+        )["score"]
 
     except ZeroDivisionError:
         result = 0.0
     return {"bleu": result}
 
 
-class LitSSMForConditiionalGeneration(pl.LightningModule):
+class LitSSMForConditionalGeneration(pl.LightningModule):
     def __init__(
         self,
         ssm_model,
@@ -122,7 +123,15 @@ class LitSSMForConditiionalGeneration(pl.LightningModule):
         return out
 
     def configure_optimizers(self):
-        optimizer = Adam(
+        try:
+            # default to fused AdamW if apex is installed
+            # based on this benchmark https://github.com/huggingface/transformers/issues/22101
+            from apex.optimizers import FusedAdam
+            optimizer_cls = FusedAdam
+        except:
+            from transformers import AdamW
+            optimizer_cls = AdamW
+        optimizer = optimizer_cls(
             [p for p in self.parameters()],
             lr=self.lr,
             betas=(0.9, 0.999),

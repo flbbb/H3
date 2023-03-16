@@ -15,7 +15,7 @@ def eval_bleu(list_predictions, list_targets, scorer):
     try:
         result = scorer.compute(
             predictions=list_predictions, references=list_targets_processed
-        )["score"]
+        )["bleu"]
 
     except ZeroDivisionError:
         result = 0.0
@@ -127,9 +127,11 @@ class LitSSMForConditionalGeneration(pl.LightningModule):
             # default to fused AdamW if apex is installed
             # based on this benchmark https://github.com/huggingface/transformers/issues/22101
             from apex.optimizers import FusedAdam
+
             optimizer_cls = FusedAdam
         except:
             from transformers import AdamW
+
             optimizer_cls = AdamW
         optimizer = optimizer_cls(
             [p for p in self.parameters()],

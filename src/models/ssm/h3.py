@@ -366,8 +366,8 @@ class H3Expand(nn.Module):
             # stride (H * L, L, 1). The two strides are equivalent because batch_size=1, but
             # the C++ code doesn't like that.
             k = rearrange(rearrange(k, "b h l -> h b l"), "h b l -> b h l")
-
-        hidden_state = self.kernel_expand(u=k, rate=1.0, L=L)  # (B r H)
+        with torch.autocast(enabled=False, device_type="cuda"):
+            hidden_state = self.kernel_expand(u=k.float(), rate=1.0, L=L)  # (B r H)
 
         # hidden_state could be in fp32 because of the SSMs
         # if not torch.is_autocast_enabled():

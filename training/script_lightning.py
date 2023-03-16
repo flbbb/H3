@@ -59,6 +59,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_heads", default=16, type=int)
     parser.add_argument("--save_dir", default="lightning_logs/")
     parser.add_argument("--find_batch_size", action="store_true")
+    parser.add_argument("--precision", default="32")
 
     args = parser.parse_args()
     config = SSMConfig(
@@ -165,6 +166,7 @@ if __name__ == "__main__":
             checkpoint_callback,
             learning_rate_monitor,
         ],
+        precision=args.precision,
     )
 
     torch.set_float32_matmul_precision("medium")

@@ -24,7 +24,7 @@ from training.models_lightning import LitSSMForConditionalGeneration
 DATA_PATH = Path(os.environ["DATA_PATH"])
 SCORER_PATH = Path(os.environ["SCORER_PATH"])
 TOKENIZER_PATH = Path(os.environ["TOKENIZER_PATH"])
-CHECKPOINT_PATH = Path(os.environ["CKPT_PATH"])
+CHECKPOINT_PATH = Path(os.environ["CHECKPOINT_PATH"])
 
 
 if __name__ == "__main__":
@@ -86,23 +86,23 @@ if __name__ == "__main__":
         shared_embeddings=True,
         use_positional_embeddings=False,
         fused_dropout_add_ln=False,
-        use_fast_fftconv=True,
+        use_fast_fftconv=False,
         fused_mlp=False,
         residual_in_fp32=False,
         layer_norm_epsilon=1e-5,
     )
 
     model = SSMForConditionalGeneration(config)
-    scorer = evaluate.load(str(SCORER_PATH / "sacrebleu.py"))
+    # scorer = evaluate.load(str(SCORER_PATH / "sacrebleu.py"))
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
 
     reverse_tokenizer = copy(tokenizer)
     reverse_tokenizer.padding_side = "left"
-    dataset = load_from_disk(DATA_PATH)
+    dataset = load_from_disk(DATA_PATH / "small_c4")
     dataset = dataset.with_format("torch")
     dataset = dataset.shuffle(seed=args.seed)
     train_dataset = dataset["train"]
-    eval_dataset = dataset["validation"].select(range(500))
+    # eval_dataset = dataset["validation"].select(range(500))
     data_collator = DataCollatorLeftPadInput(
         (tokenizer, reverse_tokenizer),
         model=model,
@@ -113,7 +113,7 @@ if __name__ == "__main__":
 
     model_lit = LitSSMForConditionalGeneration(
         model,
-        scorer=scorer,
+        scorer=None,#  scorer,
         tokenizer=tokenizer,
         num_training_steps=args.training_steps,
         ratio_warmup=0.0,
@@ -128,23 +128,23 @@ if __name__ == "__main__":
         num_workers=args.num_workers,
         collate_fn=data_collator,
     )
-    eval_data_loader = DataLoader(
-        eval_dataset,
-        batch_size=args.per_device_eval_batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        collate_fn=data_collator,
-    )
+    # eval_data_loader = DataLoader(
+    #     eval_dataset,
+    #     batch_size=args.per_device_eval_batch_size,
+    #     shuffle=False,
+    #     num_workers=args.num_workers,
+    #     collate_fn=data_collator,
+    # )
 
     accumulate_grad_batches = args.effective_batch_size // (
         args.per_device_batch_size * world_size
     )
 
-    learning_rate_monitor = LearningRateMonitor(logging_interval="step")
-    checkpoint_callback = ModelCheckpoint(
-        dirpath=CHECKPOINT_PATH,
-        every_n_train_steps=args.save_steps,
-    )
+    # learning_rate_monitor = LearningRateMonitor(logging_interval="step")
+    # checkpoint_callback = ModelCheckpoint(
+    #     dirpath=CHECKPOINT_PATH,
+    #     every_n_train_steps=args.save_steps,
+    # )
 
     trainer = pl.Trainer(
         accelerator='gpu',
@@ -157,12 +157,12 @@ if __name__ == "__main__":
         max_steps=args.training_steps,
         max_epochs=None,
         gradient_clip_val=2.0,
-        strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),
-        val_check_interval=args.save_steps * accumulate_grad_batches,
-        callbacks=[
-            checkpoint_callback,
-            learning_rate_monitor,
-        ],
+        # strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),
+        val_check_interval=None, # args.save_steps * accumulate_grad_batches,
+        # callbacks=[
+        #     checkpoint_callback,
+        #     learning_rate_monitor,
+        # ],
     )
 
     torch.set_float32_matmul_precision("medium")
@@ -170,5 +170,5 @@ if __name__ == "__main__":
         model_lit,
         train_dataloaders=data_loader,
         ckpt_path=args.resume,
-        val_dataloaders=eval_data_loader,
+        val_dataloaders=None,# eval_data_loader,
     )

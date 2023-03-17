@@ -88,7 +88,7 @@ if __name__ == "__main__":
     )
 
     model = SSMForConditionalGeneration(config)
-    scorer = evaluate.load(str(SCORER_PATH / "bleu"))
+    # scorer = evaluate.load(str(SCORER_PATH / "bleu"))
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH / "unigram-mt-wmt14-en-de")
 
     reverse_tokenizer = copy(tokenizer)
@@ -109,7 +109,7 @@ if __name__ == "__main__":
 
     model_lit = LitSSMForConditionalGeneration(
         model,
-        scorer=scorer,
+        scorer=None, #  scorer,
         tokenizer=tokenizer,
         num_training_steps=args.training_steps,
         ratio_warmup=0.0,
@@ -147,6 +147,7 @@ if __name__ == "__main__":
         every_n_train_steps=args.save_steps,
     )
 
+    print(args.precision)
     autoscale_batch_size = "power" if args.find_batch_size else None
     trainer = pl.Trainer(
         accelerator=accelerator,
@@ -156,17 +157,17 @@ if __name__ == "__main__":
         default_root_dir=args.save_dir,
         log_every_n_steps=args.logging_steps,
         max_steps=args.training_steps,
+        precision=16,
         max_epochs=None,
         # logger=CSVLogger(save_dir="logs/"),
         gradient_clip_val=2.0,
         # overfit_batches=1,
         strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),
-        val_check_interval=args.save_steps * accumulate_grad_batches,
+        val_check_interval=None, # args.save_steps * accumulate_grad_batches,
         callbacks=[
             checkpoint_callback,
             learning_rate_monitor,
         ],
-        precision=args.precision,
     )
 
     torch.set_float32_matmul_precision("medium")
@@ -174,5 +175,5 @@ if __name__ == "__main__":
         model_lit,
         train_dataloaders=data_loader,
         ckpt_path=args.resume,
-        val_dataloaders=eval_data_loader,
+        # val_dataloaders=eval_data_loader,
     )

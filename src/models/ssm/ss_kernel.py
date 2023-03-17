@@ -330,5 +330,5 @@ class SSKernelExpand(nn.Module):
                     **kernel_args,
                 )
 
-    def forward(self, u, L=None, rate=None):
+    def forward(self, u, L=None, rate=1.0):
         return self.kernel(u, L=L, rate=rate)

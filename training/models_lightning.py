@@ -114,6 +114,7 @@ class LitSSMForConditionalGeneration(pl.LightningModule):
         encoder_outputs=None,
         attention_mask=None,
     ):
+        print(len(input_ids[0]))
         out = self.model(
             input_ids=input_ids,
             labels=labels,

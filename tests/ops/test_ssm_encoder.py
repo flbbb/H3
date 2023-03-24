@@ -67,34 +67,35 @@ if __name__ == "__main__":
     decoder_input_ids = decoder_input_ids.cuda()
 
     encoder_output = encoder(embeddings=u, attention_mask=attention_mask)
-    decoder_hidden_state = decoder(
-        embeddings=u, encoder_hidden_state=encoder_output.last_hidden_state
-    )
+    encoder_output.last_hidden_state.mean().backward()
+    # decoder_hidden_state = decoder(
+    #     embeddings=u, encoder_hidden_state=encoder_output.last_hidden_state
+    # )
 
-    model_decoder_output, model_encoder_output = model(
-        input_ids=input_ids,
-        decoder_input_ids=decoder_input_ids,
-        attention_mask=attention_mask,
-    )
-    print("Encoder:", encoder_output.last_hidden_state.shape)
-    print("Decoder:", decoder_hidden_state.shape)
-    decoder_hidden_state.mean().backward()
-    model_decoder_output.mean().backward()
+    # model_decoder_output, model_encoder_output = model(
+    #     input_ids=input_ids,
+    #     decoder_input_ids=decoder_input_ids,
+    #     attention_mask=attention_mask,
+    # )
+    # print("Encoder:", encoder_output.last_hidden_state.shape)
+    # print("Decoder:", decoder_hidden_state.shape)
+    # decoder_hidden_state.mean().backward()
+    # model_decoder_output.mean().backward()
 
-    input_ids = torch.randint(0, args.vocab_size, (B, l_encoder))
-    decoder_input_ids = torch.randint(0, args.vocab_size, (B, l_decoder))
+    # input_ids = torch.randint(0, args.vocab_size, (B, l_encoder))
+    # decoder_input_ids = torch.randint(0, args.vocab_size, (B, l_decoder))
 
-    input_ids = input_ids.cuda()
-    decoder_input_ids = decoder_input_ids.cuda()
+    # input_ids = input_ids.cuda()
+    # decoder_input_ids = decoder_input_ids.cuda()
 
-    model_lm = SSMForConditionalGeneration(config)
-    model_lm.cuda()
-    logits = model_lm(
-        input_ids=input_ids,
-        labels=decoder_input_ids,
-        attention_mask=attention_mask,
-    )
-    logits.loss.backward()
-    for name, param in model.named_parameters():
-        if param.grad is None:
-            print(name)
+    # model_lm = SSMForConditionalGeneration(config)
+    # model_lm.cuda()
+    # logits = model_lm(
+    #     input_ids=input_ids,
+    #     labels=decoder_input_ids,
+    #     attention_mask=attention_mask,
+    # )
+    # logits.loss.backward()
+    # for name, param in model.named_parameters():
+    #     if param.grad is None:
+    #         print(name)

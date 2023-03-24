@@ -433,7 +433,8 @@ class SSKernelDiagExpand(OptimModule):
             A_real = -F.softplus(self.inv_A_real)
         else:
             raise NotImplementedError
-        A = torch.stack((A_real, self.A_imag), -1)
+        # A = torch.stack((A_real, self.A_imag), -1)
+        A = A_real + 1j * self.A_imag
         return A
 
     def forward(self, u, L, rate=1.0):
@@ -448,20 +449,23 @@ class SSKernelDiagExpand(OptimModule):
 
         dt = torch.exp(self.log_dt) * rate  # (H)
 
-        A = self._A()  # (H N 2)
+        A = self._A()  # (H N)
 
-        B = self.B
-        B = repeat(B, "t n c -> (v t) n c", v=self.repeat)
+        B = _r2c(self.B)
+        B = repeat(B, "t n -> 1 (v t) n", v=self.repeat)
 
         # Force A to be real valued, so the whole kernel can be interpreted as a "multi-head EMA"
 
         # Incorporate dt into A
-        A = repeat(A, "t n c -> (v t) n c", v=self.repeat)
-        dtA = A * rearrange(dt, "H -> H 1 1")  # (H N c)
+        A = repeat(A, "t n -> (v t) n", v=self.repeat)
+        dtA = A * rearrange(dt, "H -> H 1")  # (H N)
 
+        ## B SIZE
+
+        B = B * (torch.exp(dtA) - 1.0) / A
         if self.disc == "zoh":
             hidden_state = hidden_state_extraction(
-                A, dtA, B, u, dt, R_proj=self.R_proj, L=L
+                A, dtA, B, u, dt, R_proj=_r2c(self.R_proj), L=L
             )
 
         else:
@@ -476,64 +480,41 @@ def hidden_state_extraction(A, dtA, b, u, dt, L, R_proj=None):
     # u (B H L)
     # b (H N)
     # u_pad = F.pad(u.flip(dims=[2]).unsqueeze(-1), (0, 1))
-    u_pad = F.pad(u.flip(dims=[2]).unsqueeze(-1), (0, 1))
-    u_flip = LazyTensor(rearrange(u_pad, "B H L c -> B H L 1 c").contiguous())
+    u_pad = u.flip(dims=[2])  # (B H L 1)
+    u_pad = u_pad + 0j
+    u_pad = rearrange(u_pad, "B H L -> B H L 1 1").contiguous()
+    u_flip = LazyTensor(u_pad)
     dtype = (
         u.dtype if not torch.is_autocast_enabled() else torch.get_autocast_gpu_dtype()
     )
 
     # Power up
-    kernel = LazyTensor(rearrange(dtA, "H N c -> 1 H 1 N c"))
-    kernel.is_complex = True
+    kernel = LazyTensor(rearrange(dtA, "H N -> 1 H 1 N 1").contiguous())
     power = LazyTensor(
         rearrange(
             torch.arange(L, device=dtA.device, dtype=dtype),
             "L -> 1 1 L 1 1",
         )
     )
-    power.is_complex = True
-    kernel = kernel * power  # (1 H L N 1)
+    kernel = (kernel * power).exp()  # (1 H L N 1)
 
     # B
 
-    b = LazyTensor(rearrange(b, "H N c -> 1 H 1 N c"))
-    b.is_complex = True
-
-    dtA_l = LazyTensor(rearrange(dtA, "H N c -> 1 H 1 N c"))
-    dtA_l.is_complex = True
-    Lambda_l = LazyTensor(rearrange(A, "H N c -> 1 H 1 N c"))
-    Lambda_l.is_complex = True
-    ones = LazyTensor(rearrange(torch.ones_like(A), "H N c -> 1 H 1 N c"))
-    ones.is_complex = True
-
-    dtA_l_exp = dtA_l.unary("ComplexExp", dimres=dtA_l._shape[-1], is_complex=True)
-
-    dtA_m_one = dtA_l_exp.binary(
-        [1.0], "ComplexSubtract", is_complex=True, dimcheck=None
-    )
-
-    dtA_div = dtA_m_one.binary(
-        Lambda_l, "ComplexDivide", is_complex=True, dimcheck=None
-    )
-
-    b = b.binary(dtA_div, "ComplexMult", is_complex=True, dimcheck=None)
-
-    kernel = kernel.exp() * b  # (B H L N)
-
-    kernel = kernel.binary(u_flip, "*", is_operator=True)
-    hidden_state = kernel.sum(axis=2, call=False)
-    hidden_state = 2.0 * manual_call(hidden_state)
+    b = LazyTensor(rearrange(b, "1 H N -> 1 H 1 N 1").contiguous())
+    kernel = kernel * b
+    kernel = kernel * u_flip  # (B H L N 1)
+    hidden_state = 2.0 * kernel.sum(axis=2).squeeze(-1)
 
     # We could do:
     # hidden_state[..., 1] = -hidden_state[..., 1]
     # to mimics complex multiplication, but since R_proj initialization is symmetric it doesn't matter.
 
     if R_proj is not None:  # R_proj (C, H, N, r, c)
-        projected_tokens = contract("chnri,bhni->brh", R_proj, hidden_state)
+        projected_tokens = contract("hnr,bhn->brh", R_proj, hidden_state)
     else:
         projected_tokens = hidden_state
 
-    return projected_tokens
+    return projected_tokens.real
 
 
 def manual_call(lazy_tensor, *args, **kwargs):

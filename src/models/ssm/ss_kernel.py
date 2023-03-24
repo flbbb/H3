@@ -308,7 +308,7 @@ class SSKernelExpand(nn.Module):
             )
             if self.n_reconstructs is not None:
                 R_proj = torch.randn(
-                    channels, self.H, self.N // 2, self.n_reconstructs, dtype=cdtype
+                    self.H, self.N // 2, self.n_reconstructs, dtype=cdtype
                 )
             else:
                 R_proj = None

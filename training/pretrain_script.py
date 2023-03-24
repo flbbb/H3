@@ -59,12 +59,15 @@ if __name__ == "__main__":
     parser.add_argument("--find_batch_size", action="store_true")
 
     # get SLURM variables
-    rank = int(os.environ['SLURM_PROCID'])
+    rank = int(os.environ["SLURM_PROCID"])
     print("RANK: ", rank)
-    local_rank = int(os.environ['SLURM_LOCALID'])
-    world_size = int(os.environ['SLURM_NTASKS'])
-    devices = int(os.environ['SLURM_GPUS_ON_NODE'])
-    num_nodes = int(os.environ['SLURM_NNODES'])
+    # local_rank = int(os.environ['SLURM_LOCALID'])
+    # world_size = int(os.environ['SLURM_NTASKS'])
+    # devices = int(os.environ['SLURM_GPUS_ON_NODE'])
+    # num_nodes = int(os.environ['SLURM_NNODES'])
+    num_nodes = 1
+    devices = [0]
+    world_size = len(devices)
 
     args = parser.parse_args()
     config = SSMConfig(
@@ -94,7 +97,7 @@ if __name__ == "__main__":
 
     model = SSMForConditionalGeneration(config)
     # scorer = evaluate.load(str(SCORER_PATH / "sacrebleu.py"))
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH / "long_t5")
 
     reverse_tokenizer = copy(tokenizer)
     reverse_tokenizer.padding_side = "left"
@@ -113,7 +116,7 @@ if __name__ == "__main__":
 
     model_lit = LitSSMForConditionalGeneration(
         model,
-        scorer=None,#  scorer,
+        scorer=None,  #  scorer,
         tokenizer=tokenizer,
         num_training_steps=args.training_steps,
         ratio_warmup=0.0,
@@ -147,7 +150,7 @@ if __name__ == "__main__":
     # )
 
     trainer = pl.Trainer(
-        accelerator='gpu',
+        accelerator="gpu",
         accumulate_grad_batches=accumulate_grad_batches,
         check_val_every_n_epoch=None,
         devices=devices,
@@ -158,7 +161,7 @@ if __name__ == "__main__":
         max_epochs=None,
         gradient_clip_val=2.0,
         # strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),
-        val_check_interval=None, # args.save_steps * accumulate_grad_batches,
+        val_check_interval=None,  # args.save_steps * accumulate_grad_batches,
         # callbacks=[
         #     checkpoint_callback,
         #     learning_rate_monitor,
@@ -170,5 +173,5 @@ if __name__ == "__main__":
         model_lit,
         train_dataloaders=data_loader,
         ckpt_path=args.resume,
-        val_dataloaders=None,# eval_data_loader,
+        val_dataloaders=None,  # eval_data_loader,
     )

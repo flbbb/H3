@@ -25,7 +25,6 @@ from training.training_utils import read_slurm_env
 from dotenv import load_dotenv
 
 load_dotenv()
-DATA_PATH = Path(os.environ["DATA_PATH"])
 DATASET_PATH = Path(os.environ["DATASET_PATH"])
 TOKENIZER_PATH = Path(os.environ["TOKENIZER_PATH"])
 CHECKPOINT_PATH = Path(os.environ["CHECKPOINT_PATH"])
@@ -50,12 +49,9 @@ if __name__ == "__main__":
     parser.add_argument("--max_label_length", default=910, type=int)
     parser.add_argument("--save_steps", default=10, type=int)
     parser.add_argument("--training_steps", default=1000000, type=int)
-    parser.add_argument("--max_eval_steps", default=500, type=int)
     parser.add_argument("--num_workers", default=0, type=int)
-    parser.add_argument("--num_beams", default=4, type=int)
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--logging_steps", default=10, type=int)
-    parser.add_argument("--local_rank", default=0, type=int)
     parser.add_argument("--d_inner", default=2048, type=int)
     parser.add_argument("--num_heads", default=16, type=int)
     parser.add_argument("--save_dir", default="lightning_logs/")
@@ -66,13 +62,14 @@ if __name__ == "__main__":
     rank, local_rank, world_size, devices, num_nodes = read_slurm_env()
     print("RANK: ", rank)
 
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
     args = parser.parse_args()
     config = SSMConfig(
         d_model=args.d_model,
         d_state=args.d_state,
         n_layer=args.n_layer,
         d_inner=args.d_inner,
-        vocab_size=32100,
+        vocab_size=len(tokenizer),
         num_heads=args.num_heads,
         n_reconstructs=args.n_reconstructs,
         max_position_embeddings=910,
@@ -91,9 +88,7 @@ if __name__ == "__main__":
         residual_in_fp32=False,
         layer_norm_epsilon=1e-5,
     )
-
     model = SSMForConditionalGeneration(config)
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
 
     reverse_tokenizer = copy(tokenizer)
     reverse_tokenizer.padding_side = "left"

@@ -51,23 +51,20 @@ if __name__ == "__main__":
     parser.add_argument("--num_beams", default=4, type=int)
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--logging_steps", default=10, type=int)
-    parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--local_rank", default=0, type=int)
     parser.add_argument("--d_inner", default=2048, type=int)
     parser.add_argument("--num_heads", default=16, type=int)
     parser.add_argument("--save_dir", default="lightning_logs/")
     parser.add_argument("--find_batch_size", action="store_true")
+    parser.add_argument("--precision", default="bf16")
 
     # get SLURM variables
     rank = int(os.environ["SLURM_PROCID"])
     print("RANK: ", rank)
-    # local_rank = int(os.environ['SLURM_LOCALID'])
-    # world_size = int(os.environ['SLURM_NTASKS'])
-    # devices = int(os.environ['SLURM_GPUS_ON_NODE'])
-    # num_nodes = int(os.environ['SLURM_NNODES'])
-    num_nodes = 1
-    devices = [0]
-    world_size = len(devices)
+    local_rank = int(os.environ['SLURM_LOCALID'])
+    world_size = int(os.environ['SLURM_NTASKS'])
+    devices = int(os.environ['SLURM_GPUS_ON_NODE'])
+    num_nodes = int(os.environ['SLURM_NNODES'])
 
     args = parser.parse_args()
     config = SSMConfig(
@@ -89,14 +86,14 @@ if __name__ == "__main__":
         shared_embeddings=True,
         use_positional_embeddings=False,
         fused_dropout_add_ln=False,
-        use_fast_fftconv=False,
+        use_fast_fftconv=True,
         fused_mlp=False,
         residual_in_fp32=False,
         layer_norm_epsilon=1e-5,
     )
 
     model = SSMForConditionalGeneration(config)
-    # scorer = evaluate.load(str(SCORER_PATH / "sacrebleu.py"))
+    scorer = evaluate.load(str(SCORER_PATH / "sacrebleu/sacrebleu.py"))
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH / "long_t5")
 
     reverse_tokenizer = copy(tokenizer)
@@ -105,7 +102,7 @@ if __name__ == "__main__":
     dataset = dataset.with_format("torch")
     dataset = dataset.shuffle(seed=args.seed)
     train_dataset = dataset["train"]
-    # eval_dataset = dataset["validation"].select(range(500))
+    eval_dataset = dataset["validation"].select(range(500))
     data_collator = DataCollatorLeftPadInput(
         (tokenizer, reverse_tokenizer),
         model=model,
@@ -131,28 +128,29 @@ if __name__ == "__main__":
         num_workers=args.num_workers,
         collate_fn=data_collator,
     )
-    # eval_data_loader = DataLoader(
-    #     eval_dataset,
-    #     batch_size=args.per_device_eval_batch_size,
-    #     shuffle=False,
-    #     num_workers=args.num_workers,
-    #     collate_fn=data_collator,
-    # )
+    eval_data_loader = DataLoader(
+        eval_dataset,
+        batch_size=args.per_device_eval_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=data_collator,
+    )
 
     accumulate_grad_batches = args.effective_batch_size // (
         args.per_device_batch_size * world_size
     )
 
-    # learning_rate_monitor = LearningRateMonitor(logging_interval="step")
-    # checkpoint_callback = ModelCheckpoint(
-    #     dirpath=CHECKPOINT_PATH,
-    #     every_n_train_steps=args.save_steps,
-    # )
+    learning_rate_monitor = LearningRateMonitor(logging_interval="step")
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=CHECKPOINT_PATH / "test_small_c4",
+        every_n_train_steps=args.save_steps,
+    )
 
     trainer = pl.Trainer(
         accelerator="gpu",
         accumulate_grad_batches=accumulate_grad_batches,
         check_val_every_n_epoch=None,
+        precision=args.precision,
         devices=devices,
         num_nodes=num_nodes,
         default_root_dir=args.save_dir,
@@ -160,12 +158,12 @@ if __name__ == "__main__":
         max_steps=args.training_steps,
         max_epochs=None,
         gradient_clip_val=2.0,
-        # strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),
-        val_check_interval=None,  # args.save_steps * accumulate_grad_batches,
-        # callbacks=[
-        #     checkpoint_callback,
-        #     learning_rate_monitor,
-        # ],
+        strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),
+        val_check_interval=args.save_steps * accumulate_grad_batches,
+        callbacks=[
+            checkpoint_callback,
+            learning_rate_monitor,
+        ],
     )
 
     torch.set_float32_matmul_precision("medium")
@@ -173,5 +171,5 @@ if __name__ == "__main__":
         model_lit,
         train_dataloaders=data_loader,
         ckpt_path=args.resume,
-        val_dataloaders=None,  # eval_data_loader,
+        val_dataloaders=eval_data_loader,
     )

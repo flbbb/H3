@@ -6,8 +6,8 @@ lightning_logs/
 scripts_outputs/
 old_scripts/
 old_archi/
-S4D*
 
+*.env
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

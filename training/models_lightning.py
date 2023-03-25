@@ -60,7 +60,6 @@ class LitSSMForConditionalGeneration(pl.LightningModule):
             self.label_smoother = LabelSmoother(epsilon=self.label_smoothing_factor)
 
     def training_step(self, batch, batch_idx):
-        print(batch["input_ids"].shape)
         out = self(**batch)
         loss = out.loss
         self.log("train_loss", loss)
@@ -87,6 +86,12 @@ class LitSSMForConditionalGeneration(pl.LightningModule):
         return data_loader
 
     def validation_step(self, batch, batch_idx):
+        out = self(**batch)
+        loss = out.loss
+        self.log("val_loss", loss)
+        return loss
+
+    def test_step(self, batch, batch_idx):
         top_beam_ids = self.model.generate(
             inputs=batch["input_ids"],
             max_new_tokens=self.max_target_tokens - 1,

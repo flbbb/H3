@@ -19,10 +19,14 @@ from src.models.ssm_config import SSMConfig
 from src.utils.utils import DataCollatorLeftPadInput
 from src.models.ssm_seq import SSMForConditionalGeneration
 from training.models_lightning import LitSSMForConditionalGeneration
+from training.training_utils import read_slurm_env
 
 
+from dotenv import load_dotenv
+
+load_dotenv()
 DATA_PATH = Path(os.environ["DATA_PATH"])
-SCORER_PATH = Path(os.environ["SCORER_PATH"])
+DATASET_PATH = Path(os.environ["DATASET_PATH"])
 TOKENIZER_PATH = Path(os.environ["TOKENIZER_PATH"])
 CHECKPOINT_PATH = Path(os.environ["CHECKPOINT_PATH"])
 
@@ -59,12 +63,8 @@ if __name__ == "__main__":
     parser.add_argument("--precision", default="bf16")
 
     # get SLURM variables
-    rank = int(os.environ["SLURM_PROCID"])
+    rank, local_rank, world_size, devices, num_nodes = read_slurm_env()
     print("RANK: ", rank)
-    local_rank = int(os.environ['SLURM_LOCALID'])
-    world_size = int(os.environ['SLURM_NTASKS'])
-    devices = int(os.environ['SLURM_GPUS_ON_NODE'])
-    num_nodes = int(os.environ['SLURM_NNODES'])
 
     args = parser.parse_args()
     config = SSMConfig(
@@ -93,12 +93,11 @@ if __name__ == "__main__":
     )
 
     model = SSMForConditionalGeneration(config)
-    scorer = evaluate.load(str(SCORER_PATH / "sacrebleu/sacrebleu.py"))
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH / "long_t5")
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
 
     reverse_tokenizer = copy(tokenizer)
     reverse_tokenizer.padding_side = "left"
-    dataset = load_from_disk(DATA_PATH / "small_c4")
+    dataset = load_from_disk(DATASET_PATH)
     dataset = dataset.with_format("torch")
     dataset = dataset.shuffle(seed=args.seed)
     train_dataset = dataset["train"]
@@ -142,7 +141,7 @@ if __name__ == "__main__":
 
     learning_rate_monitor = LearningRateMonitor(logging_interval="step")
     checkpoint_callback = ModelCheckpoint(
-        dirpath=CHECKPOINT_PATH / "test_small_c4",
+        dirpath=CHECKPOINT_PATH,
         every_n_train_steps=args.save_steps,
     )
 

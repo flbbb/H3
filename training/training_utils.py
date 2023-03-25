@@ -15,6 +15,13 @@ import os
 import numpy as np
 from transformers import Trainer
 
+def read_slurm_env():
+    rank = int(os.environ["SLURM_PROCID"])
+    local_rank = int(os.environ["SLURM_LOCALID"])
+    world_size = int(os.environ["SLURM_NTASKS"])
+    devices = int(os.environ["SLURM_GPUS_ON_NODE"])
+    num_nodes = int(os.environ["SLURM_NNODES"])
+    return rank, local_rank, world_size, devices, num_nodes
 
 def seed_everything(seed=42):
     random.seed(seed)

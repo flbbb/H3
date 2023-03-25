@@ -23,7 +23,7 @@ class H3(nn.Module):
         d_model,
         d_state,
         l_max=None,
-        head_dim=1,
+        num_heads=1,
         use_fast_fftconv=True,
         dropout=0.0,  # Just to absorb the kwarg
         layer_idx=None,
@@ -43,9 +43,9 @@ class H3(nn.Module):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.d_model = d_model
-        self.head_dim = head_dim
-        assert d_model % head_dim == 0
-        self.H = d_model // head_dim
+        self.num_heads = num_heads
+        assert d_model % num_heads == 0
+        self.H = d_model // num_heads
         self.N = d_state
         self.L = l_max
         self.layer_idx = layer_idx
@@ -92,7 +92,7 @@ class H3(nn.Module):
         if inference_params is not None:
             assert self.layer_idx is not None
             if self.layer_idx not in inference_params.key_value_memory_dict:
-                batch_shape = (u.shape[0] * self.head_dim * self.head_dim,)
+                batch_shape = (u.shape[0] * self.num_heads * self.num_heads,)
                 state_k = self.ssm_k_kernel.default_state(*batch_shape)
                 state = self.kernel.default_state(*batch_shape)
                 inference_params.key_value_memory_dict[self.layer_idx] = (
@@ -159,8 +159,10 @@ class H3(nn.Module):
         if not use_fast_fftconv:
             fft_size = L_kernel + L
             # kv = k * v
-            kv = rearrange(k, "b (h d1) l -> b d1 1 h l", d1=self.head_dim) * rearrange(
-                v, "b (h d2) l -> b 1 d2 h l", d2=self.head_dim
+            kv = rearrange(
+                k, "b (h d1) l -> b d1 1 h l", d1=self.num_heads
+            ) * rearrange(
+                v, "b (h d2) l -> b 1 d2 h l", d2=self.num_heads
             )  # b d1 d2 h l
             kv_f = torch.fft.rfft(kv.to(dtype=ssm_kernel.dtype), n=fft_size) / fft_size
             ssm_kernel_f = torch.fft.rfft(ssm_kernel, n=fft_size)  # h L+1
@@ -168,9 +170,9 @@ class H3(nn.Module):
                 ..., :L
             ]  # b d1 d2 h l
             y = y + kv * self.D.unsqueeze(-1)  # b d1 d2 h l
-            q = rearrange(q, "b (h d1) l -> b d1 1 h l", d1=self.head_dim)
+            q = rearrange(q, "b (h d1) l -> b d1 1 h l", d1=self.num_heads)
             # einsum is way slower than multiply and then sum.
-            if self.head_dim > 1:
+            if self.num_heads > 1:
                 y = mul_sum(y, q)
                 y = rearrange(y, "b d h l -> b (d h) l")
             else:
@@ -188,7 +190,7 @@ class H3(nn.Module):
                 torch.is_autocast_enabled(),
                 True,
                 v,
-                self.head_dim,
+                self.num_heads,
                 q,
             )
 
@@ -224,20 +226,20 @@ class H3(nn.Module):
         )
         k = shift_k + k * self.ssm_k_D
         # kv = k * v
-        kv = rearrange(k, "b 1 (h d1) -> b d1 1 h", d1=self.head_dim) * rearrange(
-            v, "b 1 (h d2) -> b 1 d2 h", d2=self.head_dim
+        kv = rearrange(k, "b 1 (h d1) -> b d1 1 h", d1=self.num_heads) * rearrange(
+            v, "b 1 (h d2) -> b 1 d2 h", d2=self.num_heads
         )  # b d1 d2 h
         y, next_state = self.kernel.step(
             rearrange(kv, "b d1 d2 h -> (b d1 d2) h"), state
         )
         y = (
             rearrange(
-                y, "(b d1 d2) 1 h -> b d1 d2 h", d1=self.head_dim, d2=self.head_dim
+                y, "(b d1 d2) 1 h -> b d1 d2 h", d1=self.num_heads, d2=self.num_heads
             )
             + kv * self.D
         )
-        q = rearrange(q, "b 1 (h d1) -> b d1 1 h", d1=self.head_dim)
-        if self.head_dim > 1:
+        q = rearrange(q, "b 1 (h d1) -> b d1 1 h", d1=self.num_heads)
+        if self.num_heads > 1:
             y = mul_sum(y, q)
             y = rearrange(y, "b d h l -> b (d h) l")
         else:
@@ -255,7 +257,7 @@ class H3Expand(nn.Module):
         d_state=64,
         n_reconstructs=8,
         l_max=None,
-        head_dim=1,
+        num_heads=1,
         use_fast_fftconv=False,
         dropout=0.0,  # Just to absorb the kwarg
         layer_idx=None,
@@ -275,9 +277,9 @@ class H3Expand(nn.Module):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.d_model = d_model
-        self.head_dim = head_dim
-        assert d_model % head_dim == 0
-        self.H = d_model // head_dim
+        self.num_heads = num_heads
+        assert d_model % num_heads == 0
+        self.H = d_model // num_heads
         self.N = d_state
         self.L = l_max
         self.layer_idx = layer_idx
@@ -383,7 +385,7 @@ class H3Expand(nn.Module):
 #         d_model,
 #         d_state=64,
 #         l_max=None,
-#         head_dim=1,
+#         num_heads=1,
 #         use_fast_fftconv=False,
 #         use_flash_attn=False,
 #         dropout=0.0,  # Just to absorb the kwarg
@@ -397,7 +399,7 @@ class H3Expand(nn.Module):
 #             d_model=d_model,
 #             d_state=d_state,
 #             l_max=l_max,
-#             head_dim=head_dim,
+#             num_heads=num_heads,
 #             use_fast_fftconv=use_fast_fftconv,
 #             layer_idx=layer_idx,
 #             device=device,

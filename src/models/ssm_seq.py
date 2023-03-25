@@ -42,7 +42,10 @@ def create_mixer_cls(
         )
     else:
         mixer_cls = partial(
-            ssm_cls, layer_idx=layer_idx, **(ssm_cfg if ssm_cfg is not None else {})
+            ssm_cls,
+            layer_idx=layer_idx,
+            num_heads=num_heads,
+            **(ssm_cfg if ssm_cfg is not None else {}),
         )
     return mixer_cls
 

@@ -141,13 +141,17 @@ if __name__ == "__main__":
     )
     wandb_logger = WandbLogger(project=os.environ["WANDB_PROJECT"])
     wandb_logger.log_hyperparams(vars(args))
+    if args.precision == "16":
+        precision = int(args.precision)
+    else:
+        precision = args.precision
 
     trainer = pl.Trainer(
         logger=wandb_logger,
         accelerator="gpu",
         accumulate_grad_batches=accumulate_grad_batches,
         check_val_every_n_epoch=None,
-        precision=args.precision,
+        precision=precision,
         devices=devices,
         num_nodes=num_nodes,
         default_root_dir=args.save_dir,

@@ -482,28 +482,29 @@ def hidden_state_extraction(A, dtA, b, u, dt, L, R_proj=None):
     # u_pad = F.pad(u.flip(dims=[2]).unsqueeze(-1), (0, 1))
     u_pad = u.flip(dims=[2])  # (B H L 1)
     u_pad = u_pad + 0j
-    u_pad = rearrange(u_pad, "B H L -> B H 1 L 1").contiguous()
+    u_pad = rearrange(u_pad, "B H L -> H L 1 B").contiguous()
     u_flip = LazyTensor(u_pad)
     dtype = (
         u.dtype if not torch.is_autocast_enabled() else torch.get_autocast_gpu_dtype()
     )
 
     # Power up
-    kernel = LazyTensor(rearrange(dtA, "H N -> 1 H N 1 1").contiguous())
+    kernel = LazyTensor(rearrange(dtA, "H N -> H 1 N 1").contiguous())
     power = LazyTensor(
         rearrange(
             torch.arange(L, device=dtA.device, dtype=dtype),
-            "L -> 1 1 1 L 1",
+            "L -> 1 1 L 1 1",
         )
     )
     kernel = (kernel * power).exp()  # (1 H L N 1)
 
     # B
 
+    b = LazyTensor(rearrange(b, "1 H N -> H 1 N 1").contiguous())
+    kernel = kernel * b
     kernel = kernel * u_flip  # (H L N B)
-    hidden_state = b * 2.0 * kernel.sum(axis=3).squeeze(-1)
-
-    # hidden_state = rearrange(hidden_state, "H N B -> B H N")
+    hidden_state = 2.0 * kernel.sum(axis=2).squeeze(0)
+    hidden_state = rearrange(hidden_state, "H N B -> B H N")
 
     # We could do:
     # hidden_state[..., 1] = -hidden_state[..., 1]

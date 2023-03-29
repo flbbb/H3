@@ -159,7 +159,9 @@ class SSKernelDiag(OptimModule):
 
         # Incorporate dt into A
         A = repeat(A, "t n -> (v t) n", v=self.repeat)
-        dtA = A * dt.unsqueeze(-1)  # (H N)
+        A = rearrange(A, "H N -> 1 H N")
+        dt = rearrange(dt, "H -> 1 H 1")
+        dtA = A * dt  # (H N)
 
         # Augment B with state
         if state is not None:
@@ -458,7 +460,9 @@ class SSKernelDiagExpand(OptimModule):
 
         # Incorporate dt into A
         A = repeat(A, "t n -> (v t) n", v=self.repeat)
-        dtA = A * rearrange(dt, "H -> H 1")  # (H N)
+        A = rearrange(A, "H N -> 1 H N")
+        dt = rearrange(dt, "H -> 1 H 1")
+        dtA = A * dt  # (H N)
 
         ## B SIZE
 

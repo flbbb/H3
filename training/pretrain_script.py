@@ -142,7 +142,7 @@ if __name__ == "__main__":
     )
     wandb_logger = WandbLogger(project=os.environ["WANDB_PROJECT"])
     wandb_logger.log_hyperparams(vars(args))
-    if args.precision == "16":
+    if (args.precision == "16") or (args.precision == "32"):
         precision = int(args.precision)
     else:
         precision = args.precision

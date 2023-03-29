@@ -57,6 +57,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", default="lightning_logs/")
     parser.add_argument("--find_batch_size", action="store_true")
     parser.add_argument("--precision", default="bf16")
+    parser.add_argument("--checkpoint_option", default="")
 
     # get SLURM variables
     rank, local_rank, world_size, devices, num_nodes = read_slurm_env()
@@ -136,7 +137,7 @@ if __name__ == "__main__":
 
     learning_rate_monitor = LearningRateMonitor(logging_interval="step")
     checkpoint_callback = ModelCheckpoint(
-        dirpath=CHECKPOINT_PATH,
+        dirpath=CHECKPOINT_PATH / args.checkpoint_option,
         every_n_train_steps=args.save_steps,
     )
     wandb_logger = WandbLogger(project=os.environ["WANDB_PROJECT"])

@@ -10,7 +10,7 @@ import wandb
 import pytorch_lightning as pl
 from datasets.load import load_from_disk
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
-from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from datasets import Dataset
@@ -139,8 +139,11 @@ if __name__ == "__main__":
         dirpath=CHECKPOINT_PATH,
         every_n_train_steps=args.save_steps,
     )
+    wandb_logger = WandbLogger(project=os.environ["WANDB_PROJECT"])
+    wandb_logger.log_hyperparams(vars(args))
 
     trainer = pl.Trainer(
+        logger=wandb_logger,
         accelerator="gpu",
         accumulate_grad_batches=accumulate_grad_batches,
         check_val_every_n_epoch=None,

@@ -60,6 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", default="lightning_logs/")
     parser.add_argument("--find_batch_size", action="store_true")
     parser.add_argument("--precision", default="32")
+    parser.add_argument("--checkpoint_name", default="")
 
     args = parser.parse_args()
     config = SSMConfig(
@@ -84,11 +85,12 @@ if __name__ == "__main__":
         use_fast_fftconv=True,
         fused_mlp=False,
         residual_in_fp32=False,
+        bidirectional=True,
         layer_norm_epsilon=1e-5,
     )
 
     model = SSMForConditionalGeneration(config)
-    # scorer = evaluate.load(str(SCORER_PATH / "bleu"))
+
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH / "unigram-mt-wmt14-en-de")
 
     reverse_tokenizer = copy(tokenizer)
@@ -109,7 +111,6 @@ if __name__ == "__main__":
 
     model_lit = LitSSMForConditionalGeneration(
         model,
-        scorer=None,  #  scorer,
         tokenizer=tokenizer,
         num_training_steps=args.training_steps,
         ratio_warmup=0.1,
@@ -143,11 +144,10 @@ if __name__ == "__main__":
 
     learning_rate_monitor = LearningRateMonitor(logging_interval="step")
     checkpoint_callback = ModelCheckpoint(
-        dirpath="/home/florianlb/projects/s4d-summarization/checkpoints",
+        dirpath=f"/home/florianlb/projects/checkpoints/{args.checkpoint_name}",
         every_n_train_steps=args.save_steps,
     )
 
-    print(args.precision)
     autoscale_batch_size = "power" if args.find_batch_size else None
     trainer = pl.Trainer(
         accelerator=accelerator,
@@ -156,10 +156,10 @@ if __name__ == "__main__":
         devices=args.gpus,
         default_root_dir=args.save_dir,
         log_every_n_steps=args.logging_steps,
-        max_steps=args.training_steps,
+        max_steps=args.training_steps * accumulate_grad_batches,
         precision=args.precision,
         max_epochs=None,
-        # logger=CSVLogger(save_dir="logs/"),
+        logger=CSVLogger(save_dir="logs/"),
         gradient_clip_val=2.0,
         # overfit_batches=1,
         strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),
@@ -169,6 +169,7 @@ if __name__ == "__main__":
             learning_rate_monitor,
         ],
     )
+    print("Number of optimization steps:", trainer.estimated_stepping_batches)
 
     torch.set_float32_matmul_precision("medium")
     trainer.fit(

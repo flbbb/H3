@@ -92,7 +92,7 @@ class H3(nn.Module):
         # Don't use FusedDense since the layout is H first
         self.output_linear = nn.Linear(self.d_model, self.d_model)
 
-    def forward(self, u, inference_params=None):
+    def forward(self, u):
         """
         u: (B L H)
 
@@ -103,32 +103,9 @@ class H3(nn.Module):
             u = F.pad(u, (0, 0, 0, 1))
         L = u.size(-2)
 
-        use_fast_fftconv = self.use_fast_fftconv and inference_params is None
+        use_fast_fftconv = self.use_fast_fftconv
 
         state_k, state = None, None
-        if inference_params is not None:
-            assert self.layer_idx is not None
-            if self.layer_idx not in inference_params.key_value_memory_dict:
-                batch_shape = (u.shape[0] * self.num_heads * self.num_heads,)
-                state_k = self.ssm_k_kernel.default_state(*batch_shape)
-                state = self.kernel.default_state(*batch_shape)
-                inference_params.key_value_memory_dict[self.layer_idx] = (
-                    state_k,
-                    state,
-                )
-            else:
-                state_k, state = inference_params.key_value_memory_dict[self.layer_idx]
-            if inference_params.sequence_len_offset == 0:
-                self.ssm_k_kernel._setup_step()
-                self.kernel._setup_step()
-
-        if inference_params is not None and inference_params.sequence_len_offset > 0:
-            y, next_state_k, next_state = self.step(u, state_k, state)
-            inference_params.key_value_memory_dict[self.layer_idx][0].copy_(
-                next_state_k
-            )
-            inference_params.key_value_memory_dict[self.layer_idx][1].copy_(next_state)
-            return y
 
         # Compute SS Kernel
         L_kernel = L if self.L is None else min(L, self.L)
@@ -218,19 +195,6 @@ class H3(nn.Module):
 
         y = rearrange(y, "b h l -> b l h")
 
-        if state is not None:
-            assert inference_params is not None
-            # TODO: This doesn't ever happen?
-            # if inference_params.sequence_len_offset > 0:
-            #     y = y + k_state
-            inference_params.key_value_memory_dict[self.layer_idx][0].copy_(
-                self.ssm_k_kernel.forward_state(k_og, state_k)
-            )
-            inference_params.key_value_memory_dict[self.layer_idx][1].copy_(
-                self.kernel.forward_state(
-                    rearrange(kv, "b d1 d2 h l -> (b d1 d2) h l"), state
-                )
-            )
 
         # y could be in fp32 because of the SSMs
         if not torch.is_autocast_enabled():
@@ -241,35 +205,6 @@ class H3(nn.Module):
 
         return y
 
-    def step(self, u, state_k, state):
-        q, k, v = self.q_proj(u), self.k_proj(u), self.v_proj(u)
-        shift_k, next_state_k = self.ssm_k_kernel.step(
-            rearrange(k, "b 1 h -> b h"), state_k
-        )
-        k = shift_k + k * self.ssm_k_D
-        # kv = k * v
-        kv = rearrange(k, "b 1 (h d1) -> b d1 1 h", d1=self.num_heads) * rearrange(
-            v, "b 1 (h d2) -> b 1 d2 h", d2=self.num_heads
-        )  # b d1 d2 h
-        y, next_state = self.kernel.step(
-            rearrange(kv, "b d1 d2 h -> (b d1 d2) h"), state
-        )
-        y = (
-            rearrange(
-                y, "(b d1 d2) 1 h -> b d1 d2 h", d1=self.num_heads, d2=self.num_heads
-            )
-            + kv * self.D
-        )
-        q = rearrange(q, "b 1 (h d1) -> b d1 1 h", d1=self.num_heads)
-        if self.num_heads > 1:
-            y = mul_sum(y, q)
-            y = rearrange(y, "b d h l -> b (d h) l")
-        else:
-            y = rearrange(y * q, "b 1 1 h -> b 1 h")
-        # y could be in fp32 because of the SSMs
-        if not torch.is_autocast_enabled():
-            y = y.to(dtype=self.output_linear.weight.dtype)
-        return self.output_linear(y), next_state_k, next_state
 
 
 class H3Expand(nn.Module):

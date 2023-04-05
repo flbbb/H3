@@ -88,6 +88,7 @@ if __name__ == "__main__":
         fused_mlp=False,
         residual_in_fp32=False,
         layer_norm_epsilon=1e-5,
+        bidirectional=True,
     )
     model = SSMForConditionalGeneration(config)
 
@@ -108,10 +109,9 @@ if __name__ == "__main__":
 
     model_lit = LitSSMForConditionalGeneration(
         model,
-        scorer=None,  #  scorer,
         tokenizer=tokenizer,
         num_training_steps=args.training_steps,
-        ratio_warmup=0.0,
+        ratio_warmup=0.01,
         label_smoothing_factor=args.label_smoothing,
         lr=args.lr,
     )
@@ -157,7 +157,7 @@ if __name__ == "__main__":
         num_nodes=num_nodes,
         default_root_dir=args.save_dir,
         log_every_n_steps=args.logging_steps,
-        max_steps=args.training_steps,
+        max_steps=args.training_steps * accumulate_grad_batches,
         max_epochs=None,
         gradient_clip_val=2.0,
         strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),

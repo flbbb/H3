@@ -27,6 +27,7 @@ class SSMConfig(PretrainedConfig):
         use_fast_fftconv=False,
         fused_mlp=False,
         residual_in_fp32=False,
+        bidirectional=False,
         layer_norm_epsilon=1e-5,
         **kwargs,
     ):
@@ -48,6 +49,7 @@ class SSMConfig(PretrainedConfig):
         self.layer_norm_epsilon = layer_norm_epsilon
         self.use_fast_fftconv = use_fast_fftconv
         self.disc = "zoh"
+        self.bidirectional = bidirectional
 
         super().__init__(
             pad_token_id=pad_token_id,

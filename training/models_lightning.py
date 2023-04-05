@@ -26,14 +26,12 @@ class LitSSMForConditionalGeneration(pl.LightningModule):
     def __init__(
         self,
         ssm_model,
-        scorer,
         tokenizer,
         num_training_steps,
         lr=5e-4,
         lr_end=5e-6,
         repetition_penalty=2.5,
         max_target_tokens=80,
-        scorer_name="bleu",
         num_beams=4,
         ratio_warmup=0.1,
         batch_size=16,
@@ -47,8 +45,6 @@ class LitSSMForConditionalGeneration(pl.LightningModule):
         self.repetition_penalty = repetition_penalty
         self.num_beams = num_beams
         self.tokenizer = tokenizer
-        self.scorer_name = scorer_name
-        self.scorer = scorer
         self.num_training_steps = num_training_steps
         self.num_warmup_steps = int(ratio_warmup * num_training_steps)
         self.lr_end = lr_end

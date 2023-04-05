@@ -197,7 +197,7 @@ class SSMEncoderModel(nn.Module):
                 layer_idx=i,
                 first_layer=i == 0,
                 last_layer=False,
-                bidirectional=True,
+                bidirectional=config.bidirectional,
             )
             for i in range(config.n_layer - 1)
         ]

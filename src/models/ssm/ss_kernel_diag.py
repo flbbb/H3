@@ -178,7 +178,9 @@ class SSKernelDiag(OptimModule):
             C = C * (torch.exp(dtA) - 1.0) / A
             # TODO (TD): make it work for C.shape[0] > 1
             if log_vandermonde_fast is not None and C.shape[0] == 1:
-                K = log_vandermonde_fast(C.squeeze(0), dtA, L).unsqueeze(0)  # (H L)
+                K = log_vandermonde_fast(C.squeeze(0), dtA.squeeze(0), L).unsqueeze(
+                    0
+                )  # (H L)
             else:
                 K = log_vandermonde(C, dtA, L)  # (H L)
         elif self.disc == "bilinear":
@@ -481,34 +483,33 @@ class SSKernelDiagExpand(OptimModule):
 
 
 def hidden_state_extraction(A, dtA, b, u, dt, L, R_proj=None):
-    # u (B H L)
+    # u (B D H L)
     # b (H N)
     # u_pad = F.pad(u.flip(dims=[2]).unsqueeze(-1), (0, 1))
     u_pad = u.flip(dims=[2])  # (B H L 1)
     u_pad = u_pad + 0j
-    u_pad = rearrange(u_pad, "B H L -> H L 1 B").contiguous()
+    u_pad = rearrange(u_pad, "B D H L -> H D L 1 B").contiguous()
     u_flip = LazyTensor(u_pad)
     dtype = (
         u.dtype if not torch.is_autocast_enabled() else torch.get_autocast_gpu_dtype()
     )
 
     # Power up
-    kernel = LazyTensor(rearrange(dtA, "H N -> H 1 N 1").contiguous())
+    kernel = LazyTensor(rearrange(dtA, "1 H N -> H 1 1 N 1").contiguous())
     power = LazyTensor(
         rearrange(
             torch.arange(L, device=dtA.device, dtype=dtype),
             "L -> 1 1 L 1 1",
         )
     )
-    kernel = (kernel * power).exp()  # (1 H L N 1)
+    kernel = (kernel * power).exp()  # (H D L N 1)
 
-    # B
-
-    b = LazyTensor(rearrange(b, "1 H N -> H 1 N 1").contiguous())
-    kernel = kernel * b
-    kernel = kernel * u_flip  # (H L N B)
+    kernel = kernel * u_flip  # (H D L N B)
     hidden_state = 2.0 * kernel.sum(axis=2).squeeze(0)
-    hidden_state = rearrange(hidden_state, "H N B -> B H N")
+    hidden_state = rearrange(b, "1 H N -> 1 1 H N") * rearrange(
+        hidden_state, "H D N B -> B D H N"
+    )
+    hidden_state = rearrange(hidden_state, "B D H N -> B (D H) N").contiguous()
 
     # We could do:
     # hidden_state[..., 1] = -hidden_state[..., 1]
@@ -520,65 +521,3 @@ def hidden_state_extraction(A, dtA, b, u, dt, L, R_proj=None):
         projected_tokens = hidden_state
 
     return projected_tokens.real
-
-
-def manual_call(lazy_tensor, *args, **kwargs):
-    if not hasattr(lazy_tensor, "reduction_op"):
-        raise ValueError(
-            "A LazyTensor object may be called only if it corresponds to the output of a reduction operation or solve operation."
-        )
-
-    lazy_tensor.kwargs.update(kwargs)
-
-    if lazy_tensor.ranges is not None and "ranges" not in lazy_tensor.kwargs:
-        lazy_tensor.kwargs.update({"ranges": lazy_tensor.ranges})
-
-    if lazy_tensor.backend is not None and "backend" not in lazy_tensor.kwargs:
-        lazy_tensor.kwargs.update({"backend": lazy_tensor.backend})
-
-    if (
-        lazy_tensor._dtype is None
-    ):  # This can only happen if we haven't encountered 2D or 3D arrays just yet...
-        lazy_tensor.get_tools()
-
-        lazy_tensor._dtype = lazy_tensor.tools.dtypename(
-            lazy_tensor.tools.dtype(args[0])
-        )  # crash if LazyTensor is called
-        lazy_tensor.fixvariables()
-
-        kwargs_init, lazy_tensor.kwargs = lazy_tensor.separate_kwargs(
-            lazy_tensor.kwargs
-        )
-
-        if lazy_tensor.reduction_op == "Solve":
-            lazy_tensor.callfun = lazy_tensor.KernelSolve(
-                lazy_tensor.formula,
-                [],
-                lazy_tensor.formula2,
-                lazy_tensor.axis,
-                **kwargs_init,
-                rec_multVar_highdim=lazy_tensor.rec_multVar_highdim,
-            )
-        else:
-            lazy_tensor.callfun = lazy_tensor.Genred(
-                lazy_tensor.formula,
-                [],
-                lazy_tensor.reduction_op,
-                lazy_tensor.axis,
-                opt_arg=lazy_tensor.opt_arg,
-                formula2=lazy_tensor.formula2,
-                **kwargs_init,
-                rec_multVar_highdim=lazy_tensor.rec_multVar_highdim,
-            )
-
-    if (
-        lazy_tensor.reduction_op == "Solve"
-        and len(lazy_tensor.other.symbolic_variables) == 0
-    ):
-        # here args should be empty, according to our rule
-        if args != ():
-            raise ValueError("no input required")
-        # we replace by other
-        args = (lazy_tensor.other.variables[0],)
-
-    return lazy_tensor.callfun(*args, *lazy_tensor.variables, **lazy_tensor.kwargs)

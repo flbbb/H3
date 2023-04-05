@@ -67,6 +67,7 @@ def create_block(
     config: SSMConfig,
     attn_layer_idx=None,
     layer_idx=None,
+    bidirectional=False,
     last_layer=False,
     first_layer=False,
 ):
@@ -84,11 +85,13 @@ def create_block(
             "disc": config.disc,
             "d_state": config.d_state,
             "use_fast_fftconv": config.use_fast_fftconv,
+            "bidirectional": bidirectional,
         }
     mixer_cls = create_mixer_cls(
         ssm_cls=ssm_cls,
         layer_idx=layer_idx,
         ssm_cfg=ssm_cfg,
+        num_heads=config.num_heads,
         attn_layer_idx=attn_layer_idx,
     )
     mlp_cls = create_mlp_cls(
@@ -194,6 +197,7 @@ class SSMEncoderModel(nn.Module):
                 layer_idx=i,
                 first_layer=i == 0,
                 last_layer=False,
+                bidirectional=True,
             )
             for i in range(config.n_layer - 1)
         ]
@@ -231,7 +235,6 @@ class SSMEncoderModel(nn.Module):
             raise AttributeError("Either input_ids or embeddings ha to be supplied.")
         residual = None
         mixer_kwargs = None
-
         # Bad but we need to make sure that attention mask is supplied for correct zero-padding.
         assert attention_mask is not None
         for layer in self.layers:
@@ -298,6 +301,7 @@ class SSMDecoderModel(nn.Module):
                 attn_layer_idx=self.attn_layer_idx,
                 # resid_dropout1=embed_dropout if i == 0 else resid_dropout,
                 layer_idx=i,
+                bidirectional=False,
                 first_layer=i == 0,
                 last_layer=False,  # Last layer is standard in the decoder.
             )

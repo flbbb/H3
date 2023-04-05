@@ -98,7 +98,7 @@ if __name__ == "__main__":
     dataset = dataset.with_format("torch")
     dataset = dataset.shuffle(seed=args.seed)
     train_dataset = dataset["train"]
-    eval_dataset = Dataset.from_dict(dataset["validation"][:500])
+    eval_dataset = Dataset.from_dict(dataset["validation"][:1000])
     data_collator = DataCollatorLeftPadInput(
         (tokenizer, reverse_tokenizer),
         model=model,
@@ -109,10 +109,10 @@ if __name__ == "__main__":
 
     model_lit = LitSSMForConditionalGeneration(
         model,
-        scorer=None, #  scorer,
+        scorer=None,  #  scorer,
         tokenizer=tokenizer,
         num_training_steps=args.training_steps,
-        ratio_warmup=0.0,
+        ratio_warmup=0.1,
         label_smoothing_factor=args.label_smoothing,
         lr=args.lr,
     )
@@ -157,13 +157,13 @@ if __name__ == "__main__":
         default_root_dir=args.save_dir,
         log_every_n_steps=args.logging_steps,
         max_steps=args.training_steps,
-        precision=16,
+        precision=args.precision,
         max_epochs=None,
         # logger=CSVLogger(save_dir="logs/"),
         gradient_clip_val=2.0,
         # overfit_batches=1,
         strategy=pl.strategies.ddp.DDPStrategy(find_unused_parameters=False),
-        val_check_interval=None, # args.save_steps * accumulate_grad_batches,
+        val_check_interval=args.save_steps * accumulate_grad_batches,
         callbacks=[
             checkpoint_callback,
             learning_rate_monitor,
@@ -175,5 +175,5 @@ if __name__ == "__main__":
         model_lit,
         train_dataloaders=data_loader,
         ckpt_path=args.resume,
-        # val_dataloaders=eval_data_loader,
+        val_dataloaders=eval_data_loader,
     )

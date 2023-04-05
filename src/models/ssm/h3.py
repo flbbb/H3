@@ -17,6 +17,13 @@ def mul_sum(q, y):
     return (q * y).sum(dim=1)
 
 
+def make_bidirectional(ssm_kernel, L):
+    k_direct, k_reversed = torch.tensor_split(ssm_kernel, 2, dim=0)
+    return F.pad(k_direct, (0, L)) + torch.roll(
+        F.pad(k_reversed.flip(-1), (L, 0)), 1, dims=-1
+    )
+
+
 class H3(nn.Module):
     def __init__(
         self,
@@ -25,6 +32,7 @@ class H3(nn.Module):
         l_max=None,
         num_heads=1,
         use_fast_fftconv=True,
+        bidirectional=False,
         dropout=0.0,  # Just to absorb the kwarg
         layer_idx=None,
         device=None,
@@ -44,7 +52,9 @@ class H3(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
+        assert (num_heads == 8) or (num_heads == 1)
         assert d_model % num_heads == 0
+        self.bidirectional = bidirectional
         self.H = d_model // num_heads
         self.N = d_state
         self.L = l_max
@@ -58,16 +68,23 @@ class H3(nn.Module):
         self.v_proj = nn.Linear(self.d_model, self.d_model, **factory_kwargs)
 
         # TODO: SSKernel doesn't take device argument yet
+        if self.bidirectional:
+            channels = 2
+        else:
+            channels = 1
         self.ssm_k_kernel = SSKernel(
             self.d_model,
             N=d_state,
             L=self.L,
             mode="shift",
+            channels=channels,
             lr=kernel_args.get("lr", None),
         )
         self.ssm_k_D = nn.Parameter(torch.randn(self.d_model))
         # S4D Kernel
-        self.kernel = SSKernel(self.H, N=self.N, L=self.L, channels=1, **kernel_args)
+        self.kernel = SSKernel(
+            self.H, N=self.N, L=self.L, channels=channels, **kernel_args
+        )
         self.D = nn.Parameter(torch.randn(self.H, **factory_kwargs))
 
         # Pointwise
@@ -118,7 +135,6 @@ class H3(nn.Module):
         ssm_kernel, k_state = self.kernel(
             L=L_kernel, state=state, rate=1.0
         )  # (C H L) (B C H L)
-        ssm_kernel = rearrange(ssm_kernel, "1 h l -> h l")
 
         u = rearrange(u, "b l h -> (b l) h")
         dtype = (
@@ -135,9 +151,15 @@ class H3(nn.Module):
         ssm_k_kernel, _ = self.ssm_k_kernel(
             L=L_kernel, state=state_k, rate=1.0
         )  # (C H L) (B C H L)
+        if self.bidirectional:
+            ssm_k_kernel = make_bidirectional(ssm_k_kernel, L)
+            ssm_kernel = make_bidirectional(ssm_kernel, L)
         ssm_k_kernel = rearrange(ssm_k_kernel, "1 h l -> h l")
+        ssm_kernel = rearrange(ssm_kernel, "1 h l -> h l")
+
         if not use_fast_fftconv:
             fft_size = L_kernel + L
+
             ssm_k_kernel_f = torch.fft.rfft(ssm_k_kernel, n=fft_size)  # (H 2L)
             k_f = torch.fft.rfft(k.to(ssm_kernel.dtype), n=fft_size)  # (B H 2L)
             shift_k_out = torch.fft.irfft(ssm_k_kernel_f * k_f, n=fft_size)[..., :L]
@@ -306,6 +328,7 @@ class H3Expand(nn.Module):
             L=self.L,
             n_reconstructs=n_reconstructs,
             channels=1,
+            num_heads=self.num_heads,
             **kernel_args,
         )
 
@@ -345,6 +368,7 @@ class H3Expand(nn.Module):
 
         k = self.k_proj.weight @ u.T + self.k_proj.bias.to(dtype).unsqueeze(-1)
         k = rearrange(k, "h (b l) -> b h l", l=L)
+        # rearrange(k, "b (h d1) l -> b d1 1 h l", d1=self.num_heads)
         ssm_k_kernel, _ = self.ssm_k_kernel(
             L=L_kernel, state=state_k, rate=1.0
         )  # (C H L) (B C H L)
@@ -368,6 +392,8 @@ class H3Expand(nn.Module):
             # stride (H * L, L, 1). The two strides are equivalent because batch_size=1, but
             # the C++ code doesn't like that.
             k = rearrange(rearrange(k, "b h l -> h b l"), "h b l -> b h l")
+
+        k = rearrange(k, "b (h d1) l -> b d1 h l", d1=self.num_heads)
         with torch.autocast(enabled=False, device_type="cuda"):
             hidden_state = self.kernel_expand(u=k.float(), rate=1.0, L=L)  # (B r H)
 

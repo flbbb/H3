@@ -11,15 +11,15 @@ from argparse import ArgumentParser
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("-L_enc", "--encoder_sequence_length", type=int, default=128)
-    parser.add_argument("-L_dec", "--decoder_sequence_length", type=int, default=32)
-    parser.add_argument("-H", "--d_model", type=int, default=64)
-    parser.add_argument("-N", "--ssm_dim", type=int, default=32)
-    parser.add_argument("-B", "--batch_size", type=int, default=4)
+    parser.add_argument("-L_enc", "--encoder_sequence_length", type=int, default=4096)
+    parser.add_argument("-L_dec", "--decoder_sequence_length", type=int, default=910)
+    parser.add_argument("-H", "--d_model", type=int, default=720)
+    parser.add_argument("-N", "--ssm_dim", type=int, default=256)
+    parser.add_argument("-B", "--batch_size", type=int, default=16)
     parser.add_argument("-n", "--n_layer", type=int, default=3)
     parser.add_argument("--vocab_size", type=int, default=1000)
-    parser.add_argument("--n_heads", type=int, default=4)
-    parser.add_argument("--n_reconstructs", type=int, default=4)
+    parser.add_argument("--n_heads", type=int, default=8)
+    parser.add_argument("--n_reconstructs", type=int, default=8)
 
     args = parser.parse_args()
     l_decoder = args.decoder_sequence_length
@@ -40,6 +40,7 @@ if __name__ == "__main__":
         use_fast_fftconv=True,
         vocab_size=args.vocab_size,
         n_reconstructs=args.n_reconstructs,
+        num_heads=n_heads,
     )
     embeddings = GPT2Embeddings(
         config.d_model,
@@ -95,4 +96,5 @@ if __name__ == "__main__":
         labels=decoder_input_ids,
         attention_mask=attention_mask,
     )
+    print(logits.encoder_last_hidden_state.last_hidden_state.shape)
     logits.loss.backward()

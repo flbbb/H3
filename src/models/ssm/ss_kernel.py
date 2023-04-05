@@ -228,6 +228,7 @@ class SSKernelExpand(nn.Module):
         n_ssm=None,
         verbose=False,
         measure_args={},
+        num_heads=1,
         **kernel_args,
     ):
         """State Space Kernel which computes the convolution kernel $\\bar{K}$
@@ -253,6 +254,7 @@ class SSKernelExpand(nn.Module):
         self.mode = mode
         self.verbose = verbose
         self.kernel_args = kernel_args
+        self.num_heads = num_heads
 
         # Generate dt
         if deterministic:
@@ -308,7 +310,10 @@ class SSKernelExpand(nn.Module):
             )
             if self.n_reconstructs is not None:
                 R_proj = torch.randn(
-                    self.H, self.N // 2, self.n_reconstructs, dtype=cdtype
+                    self.H * self.num_heads,
+                    self.N // 2,
+                    self.n_reconstructs,
+                    dtype=cdtype,
                 )
             else:
                 R_proj = None

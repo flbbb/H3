@@ -15,6 +15,7 @@ import os
 import numpy as np
 from transformers import Trainer
 
+
 def read_slurm_env():
     rank = int(os.environ["SLURM_PROCID"])
     local_rank = int(os.environ["SLURM_LOCALID"])
@@ -22,6 +23,7 @@ def read_slurm_env():
     devices = int(os.environ["SLURM_GPUS_ON_NODE"])
     num_nodes = int(os.environ["SLURM_NNODES"])
     return rank, local_rank, world_size, devices, num_nodes
+
 
 def seed_everything(seed=42):
     random.seed(seed)
@@ -61,6 +63,7 @@ def predict(
     repetition_penalty,
     max_eval,
     max_target_tokens,
+    length_penalty,
     **kwargs,
 ):
     list_predictions = []
@@ -77,6 +80,7 @@ def predict(
                 attention_mask=batch["attention_mask"].to(model.device),
                 num_beams=num_beams,
                 repetition_penalty=repetition_penalty,
+                length_penalty=length_penalty,
                 **kwargs,
             )
         else:
@@ -118,6 +122,7 @@ def evaluate_model(
     n_new=[1, 2],
     n_print=4,
     metric="rouge",
+    length_penalty=0.0,
     **kwargs,
 ):
     model.eval()
@@ -130,6 +135,7 @@ def evaluate_model(
         repetition_penalty=repetition_penalty,
         max_eval=max_eval,
         max_target_tokens=max_target_tokens,
+        length_penalty=length_penalty,
         **kwargs,
     )
     results = {}

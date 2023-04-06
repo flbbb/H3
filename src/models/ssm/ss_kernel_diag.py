@@ -456,14 +456,14 @@ class SSKernelDiagExpand(OptimModule):
         A = self._A()  # (H N)
 
         B = _r2c(self.B)
-        B = repeat(B, "t n -> 1 (v t) n", v=self.repeat)
+        B = repeat(B, "t n -> 1 (v t) n", v=self.repeat).contiguous()
 
         # Force A to be real valued, so the whole kernel can be interpreted as a "multi-head EMA"
 
         # Incorporate dt into A
         A = repeat(A, "t n -> (v t) n", v=self.repeat)
-        A = rearrange(A, "H N -> 1 H N")
-        dt = rearrange(dt, "H -> 1 H 1")
+        A = rearrange(A, "H N -> 1 H N").contiguous()
+        dt = rearrange(dt, "H -> 1 H 1").contiguous()
         dtA = A * dt  # (H N)
 
         ## B SIZE
@@ -501,14 +501,14 @@ def hidden_state_extraction(A, dtA, b, u, dt, L, R_proj=None):
             torch.arange(L, device=dtA.device, dtype=dtype),
             "L -> 1 1 L 1 1",
         )
-    )
+    ).contiguous()
     kernel = (kernel * power).exp()  # (H D L N 1)
 
     kernel = kernel * u_flip  # (H D L N B)
     hidden_state = 2.0 * kernel.sum(axis=2).squeeze(0)
-    hidden_state = rearrange(b, "1 H N -> 1 1 H N") * rearrange(
+    hidden_state = rearrange(b, "1 H N -> 1 1 H N").contiguous() * rearrange(
         hidden_state, "H D N B -> B D H N"
-    )
+    ).contiguous()
     hidden_state = rearrange(hidden_state, "B D H N -> B (D H) N").contiguous()
 
     # We could do:

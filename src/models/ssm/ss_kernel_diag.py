@@ -500,15 +500,16 @@ def hidden_state_extraction(A, dtA, b, u, dt, L, R_proj=None):
         rearrange(
             torch.arange(L, device=dtA.device, dtype=dtype),
             "L -> 1 1 L 1 1",
-        )
-    ).contiguous()
+        ).contiguous()
+    )
     kernel = (kernel * power).exp()  # (H D L N 1)
 
     kernel = kernel * u_flip  # (H D L N B)
     hidden_state = 2.0 * kernel.sum(axis=2).squeeze(0)
-    hidden_state = rearrange(b, "1 H N -> 1 1 H N").contiguous() * rearrange(
-        hidden_state, "H D N B -> B D H N"
-    ).contiguous()
+    hidden_state = (
+        rearrange(b, "1 H N -> 1 1 H N").contiguous()
+        * rearrange(hidden_state, "H D N B -> B D H N").contiguous()
+    )
     hidden_state = rearrange(hidden_state, "B D H N -> B (D H) N").contiguous()
 
     # We could do:

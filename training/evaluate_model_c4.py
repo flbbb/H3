@@ -40,7 +40,7 @@ if __name__ == "__main__":
         d_state=256,
         n_layer=8,
         d_inner=3072,
-        vocab_size=40000,
+        vocab_size=32100,
         num_heads=1,
         n_reconstructs=64,
         max_position_embeddings=4096,
@@ -100,9 +100,26 @@ if __name__ == "__main__":
         num_beams=4,
         repetition_penalty=2.5,
         max_eval=np.inf,
-        max_target_tokens=30,
+        max_target_tokens=256,
         attn_mask=True,
         metric="rouge",
         length_penalty=-1,
     )
-    print(results)
+
+    predictions = results["pred_text"]
+    label = results["label_text"]
+    source = results["source_text"]
+
+    n_print = 5
+    for i in range(n_print):
+        print("Source:\n")
+        print(source[i])
+
+        print("\nLabel:\n")
+        print(label[i])
+        print("\nPredictin:\n")
+        print(predictions[i])
+
+        print("\n")
+        print("-" * 20)
+        print("\n")

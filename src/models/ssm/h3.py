@@ -19,9 +19,9 @@ def mul_sum(q, y):
 
 def make_bidirectional(ssm_kernel, L):
     k_direct, k_reversed = torch.tensor_split(ssm_kernel, 2, dim=0)
-    return F.pad(k_direct, (0, L)) + torch.roll(
+    return F.pad(k_direct, (0, L)).contiguous() + torch.roll(
         F.pad(k_reversed.flip(-1), (L, 0)), 1, dims=-1
-    )
+    ).contiguous()
 
 
 class H3(nn.Module):

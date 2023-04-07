@@ -171,6 +171,9 @@ def evaluate_model(
     results.update(repetitions_results)
     results.update(new_ngrams_results)
     results.update(lead_3_overlap_results)
+    results.update({"pred_text": list_predictions})
+    results.update({"label_text": list_inputs})
+    results.update({"source_text": list_targets})
     model.train()
     return results
 

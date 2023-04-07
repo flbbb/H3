@@ -8,6 +8,7 @@ from src.models.ssm_config import SSMConfig
 from flash_attn.modules.embedding import GPT2Embeddings
 import torch
 from argparse import ArgumentParser
+from torch.cuda.amp import autocast
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -37,6 +38,7 @@ if __name__ == "__main__":
         d_model=H,
         d_inner=4 * H,
         d_state=N,
+        n_layer=args.n_layer,
         use_fast_fftconv=True,
         vocab_size=args.vocab_size,
         n_reconstructs=args.n_reconstructs,
@@ -90,11 +92,32 @@ if __name__ == "__main__":
     decoder_input_ids = decoder_input_ids.cuda()
 
     model_lm = SSMForConditionalGeneration(config)
+    try:
+        # default to fused AdamW if apex is installed
+        # based on this benchmark https://github.com/huggingface/transformers/issues/22101
+        from apex.optimizers import FusedAdam
+
+        optimizer_cls = FusedAdam
+    except:
+        from transformers import AdamW
+
+        optimizer_cls = AdamW
+    optimizer = optimizer_cls(
+        [p for p in model_lm.parameters()],
+        lr=1e-4,
+        betas=(0.9, 0.999),
+        weight_decay=0.0,
+    )
     model_lm.cuda()
-    logits = model_lm(
+    import ipdb
+
+    ipdb.set_trace()
+    with autocast(dtype=torch.bfloat16):
+        logits = model_lm(
         input_ids=input_ids,
         labels=decoder_input_ids,
         attention_mask=attention_mask,
     )
     print(logits.encoder_last_hidden_state.last_hidden_state.shape)
     logits.loss.backward()
+    optimizer.step()

@@ -191,21 +191,35 @@ class SSMEncoderModel(nn.Module):
         self.fused_dropout_add_ln = config.fused_dropout_add_ln
         if self.fused_dropout_add_ln and dropout_add_layer_norm is None:
             raise ImportError("dropout_add_layer_norm is not installed")
-        list_modules = [
-            create_block(
+
+        if config.use_cross_attention:
+            list_modules = [
+                create_block(
+                    config,
+                    layer_idx=i,
+                    first_layer=i == 0,
+                    last_layer=False,
+                    bidirectional=config.bidirectional,
+                )
+                for i in range(config.n_layer)
+            ]
+        else:
+            list_modules = [
+                create_block(
+                    config,
+                    layer_idx=i,
+                    first_layer=i == 0,
+                    last_layer=False,
+                    bidirectional=config.bidirectional,
+                )
+                for i in range(config.n_layer - 1)
+            ]
+
+            last_layer = create_block(
                 config,
-                layer_idx=i,
-                first_layer=i == 0,
-                last_layer=False,
-                bidirectional=config.bidirectional,
+                last_layer=True,
+                layer_idx=config.n_layer - 1,
             )
-            for i in range(config.n_layer - 1)
-        ]
-        last_layer = create_block(
-            config,
-            last_layer=True,
-            layer_idx=config.n_layer - 1,
-        )
         list_modules.append(last_layer)
         self.layers = nn.ModuleList(list_modules)
 
@@ -327,6 +341,7 @@ class SSMDecoderModel(nn.Module):
         embeddings=None,
         encoder_hidden_state=None,
         position_ids=None,
+        encoder_attn_mask=None,
     ):
         if input_ids is not None and embeddings is None:
             hidden_states = self.embeddings(input_ids, position_ids=position_ids)
@@ -338,7 +353,10 @@ class SSMDecoderModel(nn.Module):
 
         for layer in self.layers:
             if layer.layer_idx in self.attn_layer_idx:
-                mixer_kwargs = {"x_kv": encoder_hidden_state}
+                mixer_kwargs = {
+                    "x_kv": encoder_hidden_state,
+                    "key_padding_mask": encoder_attn_mask,
+                }
             else:
                 mixer_kwargs = {}
             hidden_states, residual = layer(
@@ -429,9 +447,14 @@ class SSMModel(SSMPretrainedModel):
         if encoder_outputs is None:
             encoder_outputs = self.encoder(input_ids, attention_mask=attention_mask)
 
+        if self.config.use_cross_attention:
+            encoder_attn_mask = attention_mask
+        else:
+            encoder_attn_mask = None
         decoder_output = self.decoder(
             input_ids=decoder_input_ids,
             encoder_hidden_state=encoder_outputs.last_hidden_state,
+            encoder_attn_mask=encoder_attn_mask,
         )
         return decoder_output, encoder_outputs
 
@@ -466,6 +489,7 @@ class SSMForConditionalGeneration(SSMPretrainedModel):
             "input_ids": None,
             "decoder_input_ids": input_ids,
             "encoder_outputs": kwargs["encoder_outputs"],
+            "attention_mask": kwargs["attention_mask"],
         }
 
     def forward(

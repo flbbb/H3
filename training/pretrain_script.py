@@ -58,6 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--find_batch_size", action="store_true")
     parser.add_argument("--precision", default="bf16")
     parser.add_argument("--checkpoint_option", default="")
+    parser.add_argument("--use_cross_attention", action="store_true")
 
     # get SLURM variables
     rank, local_rank, world_size, devices, num_nodes = read_slurm_env()
@@ -89,6 +90,7 @@ if __name__ == "__main__":
         residual_in_fp32=False,
         layer_norm_epsilon=1e-5,
         bidirectional=True,
+        use_cross_attention=args.use_cross_attention,
     )
     model = SSMForConditionalGeneration(config)
 

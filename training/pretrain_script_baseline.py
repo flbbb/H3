@@ -60,15 +60,11 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_option", default="")
 
     # get SLURM variables
-    # rank, local_rank, world_size, devices, num_nodes = read_slurm_env()
-    rank = 0
-    world_size = 1
-    devices = [0]
-    num_nodes = 1
+    rank, local_rank, world_size, devices, num_nodes = read_slurm_env()
     print("RANK: ", rank)
 
     print(TOKENIZER_PATH)
-    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH / "long_t5")
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
     args = parser.parse_args()
     config = T5Config(
         d_ff=3072,

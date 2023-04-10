@@ -220,7 +220,7 @@ class SSMEncoderModel(nn.Module):
                 last_layer=True,
                 layer_idx=config.n_layer - 1,
             )
-        list_modules.append(last_layer)
+            list_modules.append(last_layer)
         self.layers = nn.ModuleList(list_modules)
 
         self.drop_f = nn.Dropout(config.resid_dropout)
@@ -355,7 +355,7 @@ class SSMDecoderModel(nn.Module):
             if layer.layer_idx in self.attn_layer_idx:
                 mixer_kwargs = {
                     "x_kv": encoder_hidden_state,
-                    "key_padding_mask": encoder_attn_mask,
+                    "key_padding_mask": encoder_attn_mask.bool() if encoder_attn_mask is not None else encoder_attn_mask, # key_padding_mask requires a bool tensor
                 }
             else:
                 mixer_kwargs = {}

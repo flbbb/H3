@@ -155,7 +155,7 @@ class SSKernel(nn.Module):
                 # Match torch.Conv1d init
                 C = torch.randn(self.H, self.channels, self.N)
                 nn.init.kaiming_uniform_(C, a=math.sqrt(5))
-                C = rearrange(C, "h c n -> c h n")
+                C = rearrange(C, "h c n -> c h n").contiguous() # non contiguous when c != 1
                 self.kernel = SSKernelShift(B, C, L=L, lr=lr, **kernel_args)
             else:
                 raise NotImplementedError(f"{mode=} is not valid")

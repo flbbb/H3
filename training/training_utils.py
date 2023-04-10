@@ -5,7 +5,6 @@ from unittest import result
 from datasets import Dataset
 from tqdm import tqdm
 from nltk import sent_tokenize, word_tokenize, FreqDist, ngrams
-import plotly.graph_objects as go
 import torch
 import evaluate
 from torch.optim.lr_scheduler import LambdaLR

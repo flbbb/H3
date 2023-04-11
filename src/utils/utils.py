@@ -179,6 +179,7 @@ class DataCollatorLeftPadInput:
     pad_to_multiple_of: Optional[int] = None
     label_pad_token_id: int = -100
     return_tensors: str = "pt"
+    truncate = (False,)
 
     def __call__(self, features, return_tensors=None):
         import numpy as np
@@ -226,6 +227,19 @@ class DataCollatorLeftPadInput:
                     feature["labels"] = np.concatenate(
                         [remainder, feature["labels"]]
                     ).astype(np.int64)
+
+                if self.truncate:
+                    source_features = feature["input_ids"]
+                    if len(source_features) > self.max_length:
+                        source_features = source_features[: self.max_length - 1]
+                        if isinstance(source_features, list):
+                            source_features = source_features + [
+                                self.tokenizer.eos_token_id
+                            ]
+                        else:
+                            source_features = np.concatenate(
+                                source_features, np.array([self.tokenizer.eos_token_id])
+                            ).astype(np.int64)
 
         features = self.tokenizer[1].pad(
             features,

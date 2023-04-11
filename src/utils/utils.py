@@ -179,7 +179,7 @@ class DataCollatorLeftPadInput:
     pad_to_multiple_of: Optional[int] = None
     label_pad_token_id: int = -100
     return_tensors: str = "pt"
-    truncate = (False,)
+    truncate: bool = False
 
     def __call__(self, features, return_tensors=None):
         import numpy as np
@@ -234,11 +234,11 @@ class DataCollatorLeftPadInput:
                         source_features = source_features[: self.max_length - 1]
                         if isinstance(source_features, list):
                             source_features = source_features + [
-                                self.tokenizer.eos_token_id
+                                self.tokenizer[0].eos_token_id
                             ]
                         else:
                             source_features = np.concatenate(
-                                source_features, np.array([self.tokenizer.eos_token_id])
+                                (source_features, [self.tokenizer[0].eos_token_id]),
                             ).astype(np.int64)
 
         features = self.tokenizer[1].pad(

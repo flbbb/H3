@@ -107,6 +107,7 @@ if __name__ == "__main__":
         padding="longest",
         max_length=args.max_seq_length,
         max_label_length=args.max_label_length,
+        truncate=True,
     )
 
     model_lit = LitSSMForConditionalGeneration(
